@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <title>Card Monsters</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- タイトル -->
+  <!-- ホーム画面（スクロールしない1画面） -->
+  <section id="screen-title" class="screen active">
+    <div id="home-bg"></div>
+    <header class="home-top">
+      <div id="profile-bar"></div>
+      <div class="home-res">
+        <span id="home-gold" class="res-chip"></span>
+        <span id="home-stones" class="res-chip"></span>
+        <button id="btn-pack-top" class="res-chip tap" aria-label="パックを開ける"></button>
+        <button id="btn-settings-title" class="home-gear" aria-label="設定">⚙</button>
+      </div>
+    </header>
+    <div class="home-mid">
+      <div class="home-side left">
+        <button id="btn-daily" class="side-btn"></button>
+        <button id="btn-login" class="side-btn"></button>
+      </div>
+      <div class="home-center">
+        <div class="home-title">Card Monsters</div>
+        <div id="home-hero"></div>
+        <button id="btn-home-deck" class="home-deck"></button>
+      </div>
+      <div class="home-side right">
+        <button id="btn-history" class="side-btn"></button>
+        <button id="btn-dict" class="side-btn"></button>
+        <button id="btn-more" class="side-btn"></button>
+      </div>
+    </div>
+    <div class="home-play">
+      <button id="btn-battle" class="battle-btn"></button>
+      <div class="home-modes">
+        <button id="btn-dungeon" class="mode-btn"></button>
+        <button id="btn-puzzle" class="mode-btn"></button>
+        <button id="btn-event" class="mode-btn"></button>
+        <button id="btn-free" class="mode-btn"></button>
+        <button id="btn-start" class="mode-btn"></button>
+      </div>
+      <div id="home-note"></div>
+    </div>
+    <!-- あそびかた（「その他」から開く） -->
+    <div id="rules-content" hidden>
+        <ul>
+          <li>毎ターン クリスタル+3、カードを1枚ドロー。余ったクリスタルは持ち越し。</li>
+          <li>モンスターは前から詰めて並ぶ（スロット1 → 2 → 3）。モンスターがいるスロットに出すと、そこから後ろが1つずつ押し出される。3体いっぱいだと出せない。</li>
+          <li>手札をタップ → スロットをタップでモンスターを出す。装備は自分のモンスターをタップ（1体1個、色つきは同じ色のみ）。</li>
+          <li>攻撃はスロット3→2→1の順に、1体につき1ターン1回の行動（武器装備やスキルがあれば、その行動の中で追加攻撃）。スロット1（前列）は ⚔️近接・🔮魔法・🌀カオス、スロット2・3（後列）は 🏹遠隔・🔮魔法・🌀カオス だけが攻撃できる。</li>
+          <li>⚔️は前列（スロット1）、🔮は正面（同じ番号のスロット。いなければ前列）をアーマー無視、🏹は対角の後列、🌀はランダムな相手に1〜攻撃力のダメージ。</li>
+          <li>🛡️アーマーは盾ゲージ。物理ダメージ（⚔️近接・🏹遠隔）はまずアーマーを削り、アーマーがある間はHPが減らない（割った超過分も届かない）。🌀カオスは固定ダメージで、アーマーを素通りする。🏹はアーマー持ちに25%でブロックされる。</li>
+          <li>アイテムは「装備」と使い切りの「フラッシュ」の2種類。装備済みのモンスターに付け直すと古い装備は捨て札。</li>
+          <li>装備の攻撃力は、モンスターが持たないタイプなら攻撃として追加される（近接モンスターに🔮+2 → 近接に加えて魔法2でも攻撃）。</li>
+          <li>スキル：カードのアイコンがスキル。モンスターの左端にスキル、右端に状態異常（☣️Disease・🕸️Entangle・🔇Silence など）が出る。内容は長押し／カーソルで確認。支援スキルは自分のターン開始時に発動する。</li>
+          <li>カードやモンスターを長押し（PCはカーソルを合わせる）で詳しい説明。</li>
+          <li>ステージ：1-1〜5-10。前のステージをクリアすると次に進める。各章の10番目はボス。クリア時の残りモンスター数で★が付く（4体以上で★★、6体以上で★★★）。初クリアで報酬。</li>
+          <li>フリー対戦（プレイヤーLv2で解放）：今のデッキと同じくらいの強さの相手と戦う。</li>
+          <li>同色割引：色付きの装備・フラッシュは、同じ効果の無色版よりコストが1安い。色付きの装備は同じ色のモンスターにだけ付けられ、色付きのフラッシュはその色のモンスターが自分の場にいるときだけ使える。</li>
+          <li>オート：対戦画面の「オート」を押すと、自分の番も自動で進む（カードを出す・装備・フラッシュ・生贄・ターン終了）。もう一度押すと、いまの行動が終わったところで手動に戻る。となりのボタンで演出の速さ（1倍・2倍・スキップ）を切り替えられる。どちらも次の対戦に引き継がれる。</li>
+          <li>対戦ログ・履歴・辞典：対戦画面の「ログ」でその試合のログ、📖で辞典を開ける（開いている間はゲームが止まる）。ログやカード詳細のスキル名・カード名をタップすると、辞典の該当ページが開く。タイトルの「対戦履歴」に直近50試合が残り、★を付けた試合（10試合まで）は自動で消えない。</li>
+          <li>イベント：プレイヤーLv7で解放。毎週月曜に切り替わる特殊ルールで、CPUと5連戦する。勝つほど報酬が増え、3敗で終了。何度でも挑戦でき、各段階の報酬は週に1回もらえる。3勝でイベント限定の Elite カード（作成・分解できない）がもらえる。</li>
+          <li>デイリークエスト：プレイヤーLv3で解放。毎日3つのクエストが出て、日付が変わると入れ替わる。達成したらタイトルの「デイリークエスト」で報酬を受け取る。1日1回、クエストを別のものに交換できる。ログインボーナスは7日周期で、日が空いても続きからもらえる（7日目はパック）。</li>
+          <li>地形：対戦ごとに地形が1つあり、両者に同じ効果がかかる（森・火山・天空・毒沼・古城・霧の湖・平原）。ステージは決まった地形で、ボス戦は特殊な地形。フリー対戦はランダム。効果は対戦画面の上に出る。</li>
+          <li>ヒーロー：デッキを組むときにヒーローを1人選び、ヒーロースキルを1つ選んで戦う。最初は1人で、各章のボスを倒すと増える。そのヒーローで勝つとギフトがもらえ、ギフトでヒーローのレベルを上げると、Lv10・Lv20で新しいスキルが使えるようになる。対戦中は名前の左のアイコンをタップすると説明が出る。</li>
+          <li>ダンジョン：手持ちのカードを使わず、ダンジョンの中だけのデッキで全3章を進むモード。命は3つで、戦闘に負けると1つ減る。勝つたびにカードやお守り（挑戦中ずっと効く効果）が増える。終わったとき、進んだマスの数に応じてゴールドと魔石を持ち帰れる。途中で閉じても続きから遊べる。</li>
+          <li>パズル：決まった盤面から、目標（このターンで全滅させる、など）を達成する問題。運の要素は固定されている。ヒントは3段階。3回失敗すると答えを見られる。ヒントなしでクリアすると★が付く。</li>
+          <li>パック：下の「パック」タブから開ける。パックの絵をタップするか、上をなぞると開く。種類は、通常・色（赤青緑黄紫）・高級・モンスター・アイテム・ヒーロー・イベント。ショップで、ゴールドや魔石で買える。排出率は、パック画面の「排出率」で見られる。</li>
+          <li>デッキ：モンスター8枚＋アイテム8枚。同じカードは2枚まで入れられる（レジェンドは1枚まで）。持っていれば、予備がなくても2枚入れられる。同じモンスターが2体いるときは、名前に①②が付く。</li>
+          <li>選択スキル：エピック・レジェンドのカードは、カードLv3（装備はLv2）から、候補の中からスキルを1つ追加で選べる。コレクションのカード詳細で選ぶ。いつでも無料で変更できる。金色の縁のアイコンが選択スキル。</li>
+          <li>設定：⚙ から、演出の速さ（1倍・2倍・スキップ）と効果音のオン・オフを変えられる。</li>
+          <li>成長：対戦で経験値とゴールド、勝つとカードパックがもらえる。プレイヤーLv3で分解・作成、Lv5で強化が解放。強化には同じカードの予備とゴールド・魔石が必要。</li>
+          <li>後攻ボーナス：コイントスで後攻になった側は、最初にクリスタルを1個多く持ち、ターン8（自分の4回目の番）の開始時にも1個もらう。</li>
+          <li>場のモンスターが倒されると、その持ち主がクリスタルを1個もらう（自分も相手も同じ）。生贄・山札に戻されたモンスター・Phantom の分身ではもらえない。</li>
+          <li>生贄は1ターンに1回（手札・場を合わせて）。手札のアイテム+1、モンスター+2クリスタル。場のモンスターもタップで選んで生贄にできる（+2、装備も失う）。生贄にしたカードはゲームから除外。</li>
+          <li>「ターン終了」で自動攻撃。相手の場が空なら攻撃フェーズはスキップ。</li>
+          <li>場・手札・山札のモンスター（👾残り）がすべていなくなった側の負け。場が空でも、手札か山札にモンスターが残っていれば続行。引き分けはなく、決着がつくまで続く（両者同時にいなくなった場合は、そのターンの手番側の勝ち）。</li>
+          <li>⚠️場が空のペナルティ：自分のターン終了時に場にモンスターが1体もいないと、手札と山札を合わせた中からランダムに1枚捨てられる（ゲームから除外。クリスタルはもらえない）。</li>
+          <li>🔥消耗ダメージ：ターン27以降、各ターンの開始時に場のモンスター全員（両者）がダメージを受ける。4ターンごとに+1。アーマーでは防げない。手札・山札のモンスターは受けない。</li>
+        </ul>
+    </div>
+  </section>
+
+  <!-- ステージ選択 -->
+  <section id="screen-stages" class="screen">
+    <header class="topbar">
+      <button id="btn-stages-back" class="btn small">← 戻る</button>
+      <span class="topbar-title">ステージ</span>
+      <span id="stages-res" class="res"></span>
+    </header>
+    <div id="stage-list" class="deck-scroll"></div>
+  </section>
+
+  <!-- コレクション -->
+  <section id="screen-collection" class="screen">
+    <header class="topbar">
+      <button id="btn-col-back" class="btn small">← 戻る</button>
+      <span class="topbar-title">コレクション</span>
+      <button id="btn-col-dict" class="btn small">📖 辞典</button>
+      <span id="col-res" class="res"></span>
+    </header>
+    <div id="col-tabs" class="tabs"></div>
+    <div id="col-tools" class="card-tools"></div>
+    <div class="deck-scroll"><div id="col-list" class="deck-grid"></div></div>
+  </section>
+
+  <!-- ダンジョン（ローグライクモード） -->
+  <section id="screen-dungeon" class="screen">
+    <header class="topbar">
+      <button id="btn-dg-back" class="btn small">← 戻る</button>
+      <span id="dg-title" class="topbar-title">ダンジョン</span>
+      <button id="btn-dg-quit" class="btn small danger">あきらめる</button>
+    </header>
+    <div id="dg-status"></div>
+    <div id="dg-body" class="deck-scroll"></div>
+  </section>
+
+  <!-- 詰めパズルの問題一覧 -->
+  <section id="screen-puzzles" class="screen">
+    <header class="topbar">
+      <button id="btn-pz-back" class="btn small">← 戻る</button>
+      <span class="topbar-title">パズル</span>
+      <span class="res"></span>
+    </header>
+    <div id="pz-list" class="deck-scroll"></div>
+  </section>
+
+  <!-- デッキ一覧 -->
+  <section id="screen-decks" class="screen">
+    <header class="topbar">
+      <button id="btn-decks-back" class="btn small">← 戻る</button>
+      <span class="topbar-title">デッキ</span>
+      <span id="decks-count" class="res"></span>
+    </header>
+    <div id="deck-list" class="deck-scroll"></div>
+    <div class="actions">
+      <button id="btn-deck-new" class="btn primary">＋ 新しいデッキ</button>
+    </div>
+  </section>
+
+  <!-- デッキ編集 -->
+  <section id="screen-deck" class="screen">
+    <header class="topbar">
+      <button id="btn-deck-back" class="btn small">← 一覧</button>
+      <span id="deck-title" class="topbar-title">デッキ編集</span>
+      <button id="btn-deck-reset" class="btn small">初期デッキ</button>
+    </header>
+    <div class="deck-scroll">
+      <button id="btn-deck-hero" class="btn hero-line"></button>
+      <div id="deck-contents"></div>
+      <div id="deck-tools" class="card-tools"></div>
+      <h2>モンスター <span id="count-monsters"></span></h2>
+      <div id="list-monsters" class="deck-grid"></div>
+      <h2>アイテム（装備・フラッシュ） <span id="count-items"></span></h2>
+      <div id="list-items" class="deck-grid"></div>
+    </div>
+    <div class="actions">
+      <button id="btn-deck-save" class="btn primary">保存する</button>
+    </div>
+  </section>
+
+  <!-- バトル -->
+  <section id="screen-battle" class="screen">
+    <div id="battle-bg"></div>
+    <header class="topbar">
+      <span id="turn-label" class="topbar-title"></span>
+      <span class="top-btns">
+        <button id="btn-log" class="btn small">ログ</button>
+        <button id="btn-dict-battle" class="btn small icon" aria-label="辞典">📖</button>
+        <button id="btn-mute" class="btn small icon" aria-label="効果音のオン・オフ"></button>
+        <button id="btn-settings" class="btn small icon" aria-label="設定">⚙</button>
+        <button id="btn-surrender" class="btn small danger">降参</button>
+      </span>
+    </header>
+    <div id="terrain-bar"></div>
+    <div id="info-1" class="pinfo"></div>
+    <div id="field-1" class="field foe"></div>
+    <div id="message"></div>
+    <div id="field-0" class="field me"></div>
+    <div id="info-0" class="pinfo"></div>
+    <div id="detail"></div>
+    <div id="hand-wrap">
+      <div id="hand-count"></div>
+      <div id="hand"></div>
+    </div>
+    <div class="actions">
+      <div class="auto-tools">
+        <button id="btn-auto" class="btn small" aria-label="オートバトルのオン・オフ">オート</button>
+        <button id="btn-speed" class="btn small" aria-label="演出の速さ">1倍</button>
+      </div>
+      <button id="btn-sacrifice" class="btn">生贄</button>
+      <button id="btn-use" class="btn primary hidden">使う</button>
+      <button id="btn-end" class="btn primary">ターン終了</button>
+    </div>
+    <!-- 対戦ログ（下からスライドで開く。開いている間はゲームが止まる） -->
+    <div id="log-panel">
+      <header>
+        <b>対戦ログ</b>
+        <label class="imp-toggle"><input type="checkbox" id="log-imp"> 重要なものだけ</label>
+        <button id="btn-log-dict" class="btn small">📖 辞典</button>
+        <button id="btn-log-close" class="btn small">✕</button>
+      </header>
+      <div id="log-body"></div>
+    </div>
+  </section>
+
+  <!-- 対戦履歴 -->
+  <section id="screen-history" class="screen">
+    <header class="topbar">
+      <button id="btn-hist-back" class="btn small">← 戻る</button>
+      <span id="hist-title" class="topbar-title">対戦履歴</span>
+    </header>
+    <div id="hist-body" class="deck-scroll"></div>
+  </section>
+
+  <div id="pack-stage"></div>
+  <!-- 下部のタブバー（対戦中は隠れる） -->
+  <nav id="tabbar">
+    <button id="tab-home" class="tab"><i>🏠</i><span>ホーム</span></button>
+    <button id="btn-deck" class="tab"><i>🂠</i><span>デッキ</span></button>
+    <button id="btn-collection" class="tab"><i>📚</i><span>コレクション</span></button>
+    <button id="btn-pack" class="tab"><i>🎁</i><span>パック</span><b id="tab-pack-badge" class="tab-badge"></b></button>
+    <button id="btn-hero" class="tab"><i>👑</i><span>ヒーロー</span></button>
+  </nav>
+  <div id="fx"></div>
+  <div id="tip"></div>
+  <div id="banner"></div>
+  <div id="overlay" class="hidden"></div>
+  <!-- スキル辞典（どの画面からでも重ねて開く） -->
+  <div id="dict" class="hidden">
+    <header class="topbar">
+      <button id="dict-back" class="btn small">← 戻る</button>
+      <span id="dict-title" class="topbar-title">辞典</span>
+      <button id="dict-close" class="btn small">✕ 閉じる</button>
+    </header>
+    <div id="dict-body" class="deck-scroll"></div>
+  </div>
+</div>
+
+<script src="skills.js"></script>
+<script src="cards-monsters.js"></script>
+<script src="cards-items.js"></script>
+<script src="cards.js"></script>
+<script src="terrains.js"></script>
+<script src="engine.js"></script>
+<script src="save.js"></script>
+<script src="stages.js"></script>
+<script src="heroes.js"></script>
+<script src="decks.js"></script>
+<script src="quests.js"></script>
+<script src="events.js"></script>
+<script src="dungeon.js"></script>
+<script src="packs.js"></script>
+<script src="autoai.js"></script>
+<script src="puzzle.js"></script>
+<script src="puzzles.js"></script>
+<script src="battlelog.js"></script>
+<script src="dict.js"></script>
+<script src="cardsort.js"></script>
+<script src="scenery.js"></script>
+<script src="art.js"></script>
+<script src="fx.js"></script>
+<script src="ui.js"></script>
+<script src="pack.js"></script>
+<script src="meta.js"></script>
+<script src="book.js"></script>
+<script src="deckui.js"></script>
+<script src="dungeonui.js"></script>
+<script src="puzzleui.js"></script>
+</body>
+</html>

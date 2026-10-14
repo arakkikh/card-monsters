@@ -1,0 +1,6 @@
+.DS_Store
+# ファンサイトのスクリーンショットと、その書き起こし（他サイトの内容なので公開しない）
+skill_shots/
+skills_new.txt
+skills_new_data.txt
+skills_new_build.py

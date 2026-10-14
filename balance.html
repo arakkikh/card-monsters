@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Card Monsters バランス集計</title>
+  <style>
+    body { font-family: -apple-system, "Hiragino Sans", sans-serif; background: #0f172a; color: #f1f5f9; padding: 16px; max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 20px; }
+    p { color: #94a3b8; font-size: 13px; line-height: 1.6; }
+    button { font: inherit; font-weight: 700; padding: 10px 18px; border-radius: 10px; border: 0; background: #38bdf8; color: #04263a; cursor: pointer; margin-right: 8px; }
+    pre { white-space: pre-wrap; font-size: 13px; line-height: 1.7; background: #020617; padding: 12px; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Card Monsters バランス集計</h1>
+  <p>CPU同士を大量に対戦させて、カード・スキル・色ごとの勝率と、各ステージの難しさを出します。<br>
+    カードやスキルの勝率は「そのカードが入っていたデッキの勝率」です。50%から大きく離れているものが調整の候補です。<br>
+    ステージの勝率は、その章に来るころに持っていそうな基準デッキ（balance.js の REFERENCE_DECKS）で挑んだ場合です。</p>
+  <button onclick="run(1)">集計する（数秒）</button>
+  <button onclick="run(4)">詳しく集計する（数十秒）</button>
+  <pre id="out">ボタンを押すと集計します。</pre>
+  <script src="skills.js"></script>
+  <script src="cards-monsters.js"></script>
+  <script src="cards-items.js"></script>
+  <script src="cards.js"></script>
+  <script src="terrains.js"></script>
+  <script src="engine.js"></script>
+  <script src="save.js"></script>
+  <script src="stages.js"></script>
+  <script src="heroes.js"></script>
+  <script src="quests.js"></script>
+  <script src="events.js"></script>
+  <script src="battlelog.js"></script>
+  <script src="balance.js"></script>
+  <script>
+    function run(scale) {
+      const out = document.getElementById('out');
+      out.textContent = '集計中…';
+      setTimeout(() => {
+        const lines = [];
+        runBalance(scale, s => lines.push(s));
+        out.textContent = lines.join('\n');
+      }, 30);
+    }
+  </script>
+</body>
+</html>
