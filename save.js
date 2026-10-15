@@ -79,7 +79,7 @@ function deckIsValid(profile, deck) {
   return !!deck && ok(deck.monsters, 'monster', CONFIG.DECK_MONSTERS) && ok(deck.items, 'item', CONFIG.DECK_ITEMS);
 }
 
-// 読み込んだデータを点検する。壊れていたら直せるところだけ直し、だめなら新規データにする
+// 読み込んだデータを点検する。壊れていたら直せるところだけ直す（読めないデータの扱いは loadProfileSafe）
 function sanitizeProfile(p) {
   if (!p || typeof p !== 'object' || !p.cards || typeof p.cards !== 'object') return newProfile();
   const fresh = newProfile();
@@ -126,23 +126,228 @@ function defaultStorage() {
   try { return typeof localStorage === 'undefined' ? null : localStorage; } catch (e) { return null; }
 }
 
-function loadProfile(storage = defaultStorage()) {
+// ---------- セーブデータを消さない仕組み ----------
+//   ・読めなかったデータは初期化で上書きせず「退避」に残す（BROKEN_KEY）。バックアップがあれば、そこから戻す
+//   ・形式の変換（古い版のセーブ）や、データが減る点検の前に、元のデータを「特別なバックアップ」に残す
+//   ・自動バックアップ：前回から10分以上たってからのセーブのとき、直前のデータを残す（最新3つ）
+//   ・IndexedDB にも同じデータを書く（localStorage が消えても、そこから戻す）
+//   ・書き出し（ファイル・文字列）と読み込み。読み込みの前に、今のデータを特別なバックアップに残す
+const SAVE = {
+  VERSION: 8,
+  AUTO_KEY: 'card-monsters-save-backups',   // 自動バックアップ [{ at, reason: 'auto', data }]（新しい順）
+  AUTO_MAX: 3,
+  AUTO_GAP_MS: 10 * 60 * 1000,               // 自動バックアップの間隔（毎回だと、数秒前のデータばかりになる）
+  SPECIAL_KEY: 'card-monsters-save-special', // 変換前・読み込み前・リセット前・戻す前（新しい順）
+  SPECIAL_MAX: 6,
+  BROKEN_KEY: 'card-monsters-save-broken',   // 読めなかったデータ [{ at, raw }]
+  BROKEN_MAX: 5,
+  META_KEY: 'card-monsters-save-meta',       // { lastExport, since, remind, snoozeUntil }
+  REMIND_DAYS: 7,                            // 最後に書き出してから、この日数で「バックアップをおすすめします」
+  EXPORT_APP: 'card-monsters',
+  EXPORT_FORMAT: 1,
+};
+const SAVE_REASONS = { auto: '自動', migrate: '形式の変換の前', import: '読み込みの前', reset: 'リセットの前', restore: 'バックアップから戻す前', repair: '点検で減る前', idb: 'IndexedDB から戻す前' };
+
+// 読み込みのようす（画面で知らせるため）。status: 'new' 初めて・'ok'・'migrated' 変換した・'recovered' バックアップから戻した・'broken' 読めず新規
+const saveState = { status: 'new', notice: '', blocked: false };
+
+function storeGet(storage, key) { try { return storage ? storage.getItem(key) : null; } catch (e) { return null; } }
+function storeSet(storage, key, value) { try { storage.setItem(key, value); return true; } catch (e) { return false; } }
+function storeList(storage, key) {
+  try { const v = JSON.parse(storeGet(storage, key)); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+}
+
+// セーブの中身を点検する。決して例外を出さない。
+//   返す値：{ ok, profile, version（元の版）, dropped（点検で捨てたカード・ステージがあった） }
+function parseSave(raw) {
+  let p;
+  try { p = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { return { ok: false, why: 'JSON として読めない' }; }
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return { ok: false, why: 'データの形がちがう' };
+  if (!p.cards || typeof p.cards !== 'object' || !Object.keys(p.cards).length) return { ok: false, why: 'カードのデータがない' };
   try {
-    return sanitizeProfile(JSON.parse(storage.getItem(GROWTH.SAVE_KEY)));
+    const profile = sanitizeProfile(p);
+    const dropped = Object.keys(p.cards).some(id => !profile.cards[id]) || Object.keys(p.stages || {}).some(id => !profile.stages[id]);
+    return { ok: true, profile, version: p.version || 0, dropped, savedAt: Number(p.savedAt) || 0 }; // savedAt：保存した時刻（保存データの側だけにある）
   } catch (e) {
-    return newProfile(); // 保存データなし・読めない
+    return { ok: false, why: '点検の途中で止まった（' + e.message + '）' };
   }
 }
 
-function saveProfile(profile, storage = defaultStorage()) {
-  try { storage.setItem(GROWTH.SAVE_KEY, JSON.stringify(profile)); return true; } catch (e) { return false; }
+// プレイヤーレベル・カード・ステージなど、比べるための要約
+function summarizeProfile(p) {
+  if (!p || !p.cards) return null;
+  const cards = Object.values(p.cards);
+  const stages = Object.values(p.stages || {});
+  return {
+    level: p.level || 1, wins: p.wins || 0, losses: p.losses || 0, gold: p.gold || 0, stones: p.stones || 0,
+    cardKinds: cards.length, cardCopies: cards.reduce((n, c) => n + 1 + (c.copies || 0), 0),
+    stagesCleared: stages.length, stars: stages.reduce((n, v) => n + v, 0),
+    dungeonBest: (p.dungeon && p.dungeon.best && p.dungeon.best.floor) || 0,
+    puzzles: p.puzzle && p.puzzle.done ? Object.keys(p.puzzle.done).length : 0,
+  };
+}
+// 遊んだ形跡があるか（初期状態のデータを、大事なデータと取りちがえない）
+function hasProgress(sum) { return !!sum && (sum.level > 1 || sum.wins > 0 || sum.losses > 0 || sum.stagesCleared > 0); }
+
+// 退避・バックアップに足す（新しい順・上限つき）。書けたら true
+function pushBackup(storage, key, entry, max) {
+  const list = storeList(storage, key);
+  list.unshift(entry);
+  while (list.length > max) list.pop();
+  // 入りきらないとき（容量不足）は、古いものから減らして入れ直す
+  while (list.length) {
+    if (storeSet(storage, key, JSON.stringify(list))) return true;
+    list.pop();
+  }
+  return false;
+}
+function backupSpecial(storage, reason, raw, now = Date.now()) {
+  if (!raw) return true;
+  return pushBackup(storage, SAVE.SPECIAL_KEY, { at: now, reason, data: raw }, SAVE.SPECIAL_MAX);
+}
+
+// 起動時の読み込み。読めないときも、元のデータは消さずに退避する
+function loadProfileSafe(storage = defaultStorage(), now = Date.now()) {
+  const raw = storeGet(storage, GROWTH.SAVE_KEY);
+  saveState.blocked = false; saveState.notice = '';
+  if (raw == null) { saveState.status = 'new'; return newProfile(); }
+  const r = parseSave(raw);
+  if (r.ok) {
+    // 古い版の形式・点検で減るデータは、変換する前の元データを残しておく
+    if (r.version !== SAVE.VERSION || r.dropped) backupSpecial(storage, r.version !== SAVE.VERSION ? 'migrate' : 'repair', raw, now);
+    saveState.status = r.version !== SAVE.VERSION ? 'migrated' : 'ok';
+    return r.profile;
+  }
+  // 読めない：元のデータを退避する。退避できなければ、上書きしないよう保存を止める
+  if (!pushBackup(storage, SAVE.BROKEN_KEY, { at: now, raw, why: r.why }, SAVE.BROKEN_MAX)) saveState.blocked = true;
+  for (const b of [...storeList(storage, SAVE.AUTO_KEY), ...storeList(storage, SAVE.SPECIAL_KEY)].sort((x, y) => y.at - x.at)) {
+    const rb = parseSave(b.data);
+    if (rb.ok) {
+      saveState.status = 'recovered';
+      saveState.notice = `セーブデータが読めなかったため、${saveDateText(b.at)} のバックアップから戻しました。読めなかったデータは退避してあります（⚙ 設定 → セーブデータ）。`;
+      return rb.profile;
+    }
+  }
+  saveState.status = 'broken';
+  saveState.notice = saveState.blocked
+    ? 'セーブデータが読めませんでした。元のデータを守るため、保存を止めています。⚙ 設定 → セーブデータ から、データの書き出しや読み込みができます。'
+    : 'セーブデータが読めなかったため、新しく始めます。読めなかったデータは退避してあります（⚙ 設定 → セーブデータ）。';
+  return newProfile();
+}
+
+function loadProfile(storage = defaultStorage()) { return loadProfileSafe(storage); }
+
+function saveDateText(at) {
+  if (!at) return '不明';
+  const d = new Date(at), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${z(d.getMonth() + 1)}/${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+
+let saveMirror = null; // IndexedDB にも書く関数（ブラウザで saveIdbInit が入れる）
+
+function saveProfile(profile, storage = defaultStorage(), now = Date.now()) {
+  if (saveState.blocked || !storage) return false; // 読めなかった元データを守っている間は書かない
+  // 自動バックアップ：前のバックアップから時間がたっていれば、上書きする前のデータを残す
+  const prev = storeGet(storage, GROWTH.SAVE_KEY);
+  if (prev) {
+    const auto = storeList(storage, SAVE.AUTO_KEY);
+    if (!auto.length || now - auto[0].at >= SAVE.AUTO_GAP_MS) pushBackup(storage, SAVE.AUTO_KEY, { at: now, reason: 'auto', data: prev }, SAVE.AUTO_MAX);
+  }
+  const json = JSON.stringify(Object.assign({}, profile, { savedAt: now })); // 保存した時刻は、保存したデータの側だけに書く
+  if (!storeSet(storage, GROWTH.SAVE_KEY, json)) return false;
+  if (saveMirror) { try { saveMirror(json); } catch (e) { /* IndexedDB に書けなくても続ける */ } }
+  return true;
 }
 
 function resetProfile(storage = defaultStorage()) {
   const fresh = newProfile();
-  try { storage.removeItem(GROWTH.SAVE_KEY); } catch (e) { /* 保存できない環境でも続行 */ }
+  backupSpecial(storage, 'reset', storeGet(storage, GROWTH.SAVE_KEY)); // リセットの前のデータも残す（設定から戻せる）
+  saveState.blocked = false;
   saveProfile(fresh, storage);
   return fresh;
+}
+
+// バックアップの一覧（設定画面）：[{ kind: 'auto'|'special', index, at, reason, sum }]
+function listBackups(storage = defaultStorage()) {
+  const out = [];
+  for (const [kind, key] of [['auto', SAVE.AUTO_KEY], ['special', SAVE.SPECIAL_KEY]]) {
+    storeList(storage, key).forEach((b, index) => {
+      const r = parseSave(b.data);
+      out.push({ kind, index, at: b.at, reason: b.reason, ok: r.ok, sum: r.ok ? summarizeProfile(r.profile) : null });
+    });
+  }
+  return out.sort((x, y) => y.at - x.at);
+}
+function listBroken(storage = defaultStorage()) { return storeList(storage, SAVE.BROKEN_KEY); }
+
+// バックアップから戻す（戻す前の今のデータも残す）。戻した profile を返す（だめなら null）
+function restoreBackup(kind, index, storage = defaultStorage(), now = Date.now()) {
+  const b = storeList(storage, kind === 'auto' ? SAVE.AUTO_KEY : SAVE.SPECIAL_KEY)[index];
+  const r = b && parseSave(b.data);
+  if (!r || !r.ok) return null;
+  backupSpecial(storage, 'restore', storeGet(storage, GROWTH.SAVE_KEY), now);
+  saveState.blocked = false;
+  return saveProfile(r.profile, storage, now) ? r.profile : null;
+}
+
+// ---------- 書き出し・読み込み ----------
+//   書き出す中身：セーブデータ・対戦履歴・設定・カードの並び順（どれも、この端末の localStorage にあるもの）
+const SAVE_EXTRA_KEYS = { history: 'card-monsters-history-v1', settings: 'card-monsters-settings', cardview: 'card-monsters-cardview' };
+
+function exportSaveData(storage = defaultStorage(), now = Date.now()) {
+  const raw = storeGet(storage, GROWTH.SAVE_KEY);
+  const r = raw ? parseSave(raw) : { ok: false };
+  const data = { app: SAVE.EXPORT_APP, format: SAVE.EXPORT_FORMAT, exportedAt: now, profile: r.ok ? JSON.parse(raw) : null };
+  for (const [k, key] of Object.entries(SAVE_EXTRA_KEYS)) {
+    try { const v = JSON.parse(storeGet(storage, key)); if (v != null) data[k] = v; } catch (e) { /* なければ入れない */ }
+  }
+  return data;
+}
+function exportSaveText(storage = defaultStorage(), now = Date.now()) { return JSON.stringify(exportSaveData(storage, now)); }
+
+// 読み込む文字列を点検する。書き出したファイル・文字列のほか、セーブデータそのもの（JSON）も受けつける
+function parseImportText(text) {
+  let d;
+  try { d = JSON.parse(String(text || '').trim().replace(/^﻿/, '')); } catch (e) { return { ok: false, why: 'セーブデータの文字列として読めません。書き出したファイル・文字列を、そのまま全部貼り付けてください' }; }
+  if (!d || typeof d !== 'object') return { ok: false, why: 'セーブデータの形ではありません' };
+  const isExport = d.app === SAVE.EXPORT_APP && 'profile' in d;
+  const prof = isExport ? d.profile : d;
+  const r = parseSave(prof);
+  if (!r.ok) return { ok: false, why: `セーブデータが読めません（${r.why}）` };
+  return { ok: true, data: isExport ? d : { profile: d }, profile: r.profile, sum: summarizeProfile(r.profile), exportedAt: isExport ? d.exportedAt : 0, savedAt: r.savedAt };
+}
+
+// 読み込みを反映する（前の今のデータは特別なバックアップに残す）。新しい profile を返す
+function applyImport(parsed, storage = defaultStorage(), now = Date.now()) {
+  backupSpecial(storage, 'import', storeGet(storage, GROWTH.SAVE_KEY), now);
+  saveState.blocked = false;
+  if (!saveProfile(parsed.profile, storage, now)) return null;
+  for (const [k, key] of Object.entries(SAVE_EXTRA_KEYS)) {
+    if (parsed.data[k] != null) storeSet(storage, key, JSON.stringify(parsed.data[k]));
+  }
+  return parsed.profile;
+}
+
+// ---------- 定期的なバックアップの案内 ----------
+
+function saveMeta(storage = defaultStorage()) {
+  try { const m = JSON.parse(storeGet(storage, SAVE.META_KEY)); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; }
+}
+function setSaveMeta(patch, storage = defaultStorage()) {
+  const m = Object.assign(saveMeta(storage), patch);
+  storeSet(storage, SAVE.META_KEY, JSON.stringify(m));
+  return m;
+}
+function markExported(storage = defaultStorage(), now = Date.now()) { return setSaveMeta({ lastExport: now, snoozeUntil: 0 }, storage); }
+
+// ホーム画面で「バックアップをおすすめします」と出すか
+function backupReminderDue(profile, storage = defaultStorage(), now = Date.now()) {
+  const m = saveMeta(storage);
+  if (m.remind === false) return false;
+  if (!hasProgress(summarizeProfile(profile))) return false;
+  if (!m.since) { setSaveMeta({ since: now }, storage); return false; } // 初めて：この日から数える
+  if (m.snoozeUntil && now < m.snoozeUntil) return false;
+  return now - (m.lastExport || m.since) >= SAVE.REMIND_DAYS * 86400000;
 }
 
 // 対戦に使うデッキ（持っているレベルつき）

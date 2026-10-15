@@ -1794,3 +1794,25 @@ h1 { font-size: 36px; letter-spacing: 1px; }
 .result.settings > p:not(.settings-note) { align-self: flex-start; font-size: 13px; margin-top: 4px; }
 .mr-grid.jingle { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .mr-grid .btn.small { min-height: 40px; font-size: 12px; }
+
+/* ---------- セーブデータ ---------- */
+.save-menu .settings-row .btn { flex: 1; }
+.sv-file { position: relative; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.sv-file input { position: absolute; inset: 0; opacity: 0; font-size: 100px; cursor: pointer; }
+.sv-list { list-style: none; width: 100%; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.sv-item { background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.sv-item > div:first-child { flex: 1 1 100%; display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.sv-item small { color: #94a3b8; }
+.sv-sum { flex: 1; font-size: 12px; color: #cbd5e1; }
+.sv-item .btn { margin: 0; min-height: 36px; }
+.sv-empty { font-size: 12px; color: #94a3b8; }
+.sv-text { width: 100%; min-height: 160px; font: 12px/1.4 monospace; background: #0f172a; color: #e2e8f0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.sv-error { color: #f87171; font-size: 13px; }
+.sv-compare { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sv-compare th { text-align: left; color: #94a3b8; font-weight: normal; padding: 4px; font-size: 12px; white-space: nowrap; }
+.sv-compare td { padding: 4px; text-align: right; }
+.sv-compare tr:first-child td { color: #94a3b8; font-size: 12px; }
+.sv-compare tr.diff td { color: var(--gold); font-weight: bold; }
+#home-backup { display: flex; align-items: center; gap: 6px; justify-content: center; font-size: 12px; color: #cbd5e1; margin-top: 4px; }
+#home-backup[hidden] { display: none; }
+#home-backup .btn { margin: 0; padding: 4px 10px; min-height: 30px; font-size: 12px; white-space: nowrap; flex: none; }

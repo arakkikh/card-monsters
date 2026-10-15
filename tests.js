@@ -1752,6 +1752,192 @@ test('セーブ：保存して読み込むと同じ状態に戻る', () => {
   eq(loadProfile(st), p);
 });
 
+// ---------- セーブデータを消さない仕組み ----------
+
+const T0 = 1760000000000, MIN = 60000;
+// 古い形式（版1：デッキが1つ・ヒーローやデイリーなどがない）のセーブ
+const oldSave = () => ({
+  version: 1, level: 6, xp: 12, gold: 345, stones: 67, packs: 2,
+  cards: { r01: { level: 2, copies: 1 }, r02: { level: 1, copies: 0 }, r03: { level: 1, copies: 3 }, b02: { level: 1, copies: 0 }, b03: { level: 1, copies: 0 },
+    g02: { level: 1, copies: 0 }, y02: { level: 1, copies: 0 }, p02: { level: 1, copies: 0 }, p08: { level: 1, copies: 0 },
+    e01: { level: 1, copies: 0 }, e02: { level: 1, copies: 0 }, e03: { level: 1, copies: 0 }, e04: { level: 1, copies: 0 }, e05: { level: 1, copies: 0 },
+    f01: { level: 1, copies: 0 }, f03: { level: 1, copies: 0 }, f04: { level: 1, copies: 0 } },
+  deck: { monsters: DEFAULT_DECK.monsters.slice(), items: DEFAULT_DECK.items.slice() },
+  stages: { '1-1': 3, '1-2': 2 }, wins: 9, losses: 4,
+});
+
+test('セーブ（守り）：古い形式のセーブを読み込んでもデータが消えず、変換の前の元データがバックアップに残る', () => {
+  const st = memStorage(), raw = JSON.stringify(oldSave());
+  st.setItem(GROWTH.SAVE_KEY, raw);
+  const p = loadProfileSafe(st, T0);
+  eq(saveState.status, 'migrated');
+  eq([p.version, p.level, p.xp, p.gold, p.stones, p.wins, p.losses], [SAVE.VERSION, 6, 12, 345, 67, 9, 4]);
+  eq(p.cards.r01, { level: 2, copies: 1 }); eq(p.cards.r03.copies, 3); eq(!!p.cards.p08, true);
+  eq(p.stages, { '1-1': 3, '1-2': 2 });
+  eq(p.decks.length, 1, '古いデッキは「デッキ1」に');
+  const sp = JSON.parse(st.getItem(SAVE.SPECIAL_KEY));
+  eq(sp.length, 1); eq(sp[0].reason, 'migrate'); eq(sp[0].data, raw, '元データがそのまま残る');
+  eq(st.getItem(GROWTH.SAVE_KEY), raw, '読み込んだだけでは上書きしない');
+  // 変換後に保存して、もう一度読む：もう変換しないので、バックアップは増えない
+  saveProfile(p, st, T0 + MIN);
+  loadProfileSafe(st, T0 + 2 * MIN);
+  eq(saveState.status, 'ok');
+  eq(JSON.parse(st.getItem(SAVE.SPECIAL_KEY)).length, 1);
+});
+
+test('セーブ（守り）：なくなったカードなどで点検するとデータが減るときも、元データを残す', () => {
+  const st = memStorage(), old = Object.assign(oldSave(), { version: SAVE.VERSION });
+  old.cards.zz99 = { level: 3, copies: 1 }; // 今はないカード
+  st.setItem(GROWTH.SAVE_KEY, JSON.stringify(old));
+  const p = loadProfileSafe(st, T0);
+  eq(!!p.cards.zz99, false);
+  const sp = JSON.parse(st.getItem(SAVE.SPECIAL_KEY));
+  eq(sp[0].reason, 'repair'); eq(JSON.parse(sp[0].data).cards.zz99, { level: 3, copies: 1 });
+});
+
+test('セーブ（守り）：壊れたデータは初期化で上書きせず退避し、画面で知らせる', () => {
+  for (const bad of ['{こわれたデータ', '[]', '"文字"', '{"level":5}', '{"cards":{}}', '{"cards":{"r01":{"level":1}},"stages":"x","decks":7,"hero":3}']) {
+    const st = memStorage();
+    st.setItem(GROWTH.SAVE_KEY, bad);
+    const p = loadProfileSafe(st, T0);
+    const broken = JSON.parse(st.getItem(SAVE.BROKEN_KEY) || '[]');
+    if (saveState.status !== 'broken') { eq(bad.includes('"r01"'), true, '直せるデータは直して読む'); eq(p.cards.r01.level, 1); continue; }
+    eq(saveState.status, 'broken', bad);
+    eq(broken[0].raw, bad, '元の文字列がそのまま退避される');
+    eq(saveState.notice.includes('退避'), true, '画面で知らせる');
+    eq(p.level, 1);
+    eq(st.getItem(GROWTH.SAVE_KEY), bad, '読み込んだだけでは消さない');
+    eq(listBroken(st).length, 1);
+  }
+});
+
+test('セーブ（守り）：壊れていても、自動バックアップがあればそこから戻す', () => {
+  const st = memStorage(), good = Object.assign(newProfile(), { level: 8, gold: 500, wins: 20 });
+  st.setItem(GROWTH.SAVE_KEY, JSON.stringify(good));
+  const p2 = Object.assign(newProfile(), { level: 9 });
+  saveProfile(p2, st, T0); // 直前の good が自動バックアップに入る
+  st.setItem(GROWTH.SAVE_KEY, '{"cards": こわれた');
+  const p = loadProfileSafe(st, T0 + MIN);
+  eq(saveState.status, 'recovered');
+  eq([p.level, p.gold, p.wins], [8, 500, 20]);
+  eq(saveState.notice.includes('バックアップから戻しました'), true);
+  eq(listBroken(st)[0].raw, '{"cards": こわれた');
+});
+
+test('セーブ（守り）：退避の場所に書けない（容量不足など）ときは、元データを上書きしないよう保存を止める', () => {
+  const st = memStorage(), set = st.setItem;
+  st.setItem(GROWTH.SAVE_KEY, '{こわれた');
+  st.setItem = (k, v) => { if (k === SAVE.BROKEN_KEY) throw new Error('いっぱい'); set(k, v); };
+  loadProfileSafe(st, T0);
+  eq(saveState.blocked, true);
+  eq(saveProfile(newProfile(), st, T0), false);
+  eq(st.getItem(GROWTH.SAVE_KEY), '{こわれた', '元データは残る');
+  st.setItem = set;
+  saveState.blocked = false;
+});
+
+test('セーブ（守り）：自動バックアップは、10分以上あけた保存のときに直前のデータを残し、最新3つを持つ', () => {
+  const st = memStorage();
+  const at = [0, 1, 2, 11, 12, 25, 40, 55].map(m => T0 + m * MIN);
+  at.forEach((t, i) => saveProfile(Object.assign(newProfile(), { gold: i }), st, t));
+  const auto = JSON.parse(st.getItem(SAVE.AUTO_KEY));
+  eq(auto.length, SAVE.AUTO_MAX);
+  eq(auto.map(b => JSON.parse(b.data).gold), [6, 5, 4], '新しい順・上書きする前のデータ');
+  eq(auto.map(b => b.at), [at[7], at[6], at[5]]);
+  eq(JSON.parse(st.getItem(GROWTH.SAVE_KEY)).gold, 7);
+});
+
+test('セーブ（守り）：バックアップの一覧と、この時点に戻す（戻す前の今のデータも残す）', () => {
+  const st = memStorage();
+  saveProfile(Object.assign(newProfile(), { level: 3, wins: 2 }), st, T0);
+  saveProfile(Object.assign(newProfile(), { level: 4, wins: 5 }), st, T0 + 11 * MIN);
+  const list = listBackups(st);
+  eq(list.length, 1); eq(list[0].kind, 'auto'); eq(list[0].sum.level, 3); eq(list[0].sum.wins, 2);
+  const p = restoreBackup('auto', 0, st, T0 + 12 * MIN);
+  eq(p.level, 3);
+  eq(JSON.parse(st.getItem(GROWTH.SAVE_KEY)).level, 3);
+  const sp = listBackups(st).find(b => b.reason === 'restore');
+  eq(sp.sum.level, 4, '戻す前のデータ');
+  eq(restoreBackup('auto', 9, st), null, 'ないバックアップ');
+});
+
+test('セーブ（守り）：データリセットの前のデータもバックアップに残り、戻せる', () => {
+  const st = memStorage();
+  saveProfile(Object.assign(newProfile(), { level: 12, gold: 999 }), st, T0);
+  const fresh = resetProfile(st);
+  eq(fresh.level, 1);
+  const b = listBackups(st).find(x => x.reason === 'reset');
+  eq(b.sum.level, 12);
+  eq(restoreBackup(b.kind, b.index, st).gold, 999);
+});
+
+test('セーブ（書き出し）：書き出し → 読み込みで、セーブ・対戦履歴・設定・並び順がすべて元どおり', () => {
+  const a = memStorage(), b = memStorage();
+  const p = richProfile();
+  addCard(p, 'p08'); p.cards.r02 = { level: 3, copies: 2 }; p.wins = 7; p.stages['1-1'] = 3;
+  p.dungeon.best.floor = 12; p.puzzle.done.p01 = 1;
+  saveProfile(p, a, T0);
+  a.setItem(SAVE_EXTRA_KEYS.history, JSON.stringify([{ id: 1, w: 1, memo: 'メモ' }]));
+  a.setItem(SAVE_EXTRA_KEYS.settings, JSON.stringify({ speed: 2, bgm: 0.3 }));
+  a.setItem(SAVE_EXTRA_KEYS.cardview, JSON.stringify({ collection: { sort: 'cost' } }));
+  const text = exportSaveText(a, T0 + MIN);
+  // 別の端末（別のアドレス）：遊びかけのデータがある
+  saveProfile(Object.assign(newProfile(), { level: 2, wins: 1 }), b, T0);
+  const r = parseImportText(text);
+  eq(r.ok, true);
+  eq(r.sum.level, 10); eq(r.exportedAt, T0 + MIN);
+  const q = applyImport(r, b, T0 + 2 * MIN);
+  eq(q, p);
+  eq(loadProfileSafe(b), p, '読み込み直しても同じ');
+  for (const k of Object.values(SAVE_EXTRA_KEYS)) eq(b.getItem(k), a.getItem(k), k);
+  const before = listBackups(b).find(x => x.reason === 'import');
+  eq(before.sum.level, 2, '読み込む前の今のデータが残る');
+  // もう一度書き出すと、同じ中身
+  eq(JSON.parse(exportSaveText(b, 5)).profile.cards, JSON.parse(text).profile.cards);
+});
+
+test('セーブ（書き出し）：読み込みは壊れた文字列を受けつけず、今のデータを変えない。セーブデータそのもの（JSON）も読める', () => {
+  const st = memStorage();
+  saveProfile(Object.assign(newProfile(), { level: 5 }), st, T0);
+  const keep = st.getItem(GROWTH.SAVE_KEY);
+  for (const bad of ['', 'abc', '{"app":"card-monsters","profile":null}', '{"app":"card-monsters","profile":{"level":3}}', '12', '{"cards":{}}']) {
+    const r = parseImportText(bad);
+    eq(r.ok, false, bad);
+    eq(typeof r.why, 'string');
+  }
+  eq(st.getItem(GROWTH.SAVE_KEY), keep);
+  const raw = parseImportText('﻿  ' + JSON.stringify(oldSave()) + '\n');
+  eq(raw.ok, true, '古い形式のセーブそのもの'); eq(raw.sum.level, 6); eq(raw.profile.version, SAVE.VERSION);
+});
+
+test('セーブ（案内）：最後に書き出してから7日以上で「バックアップをおすすめします」。オフ・あとで・遊んでいないときは出さない', () => {
+  const st = memStorage(), day = 86400000;
+  const fresh = newProfile(), played = Object.assign(newProfile(), { level: 3, wins: 4 });
+  eq(backupReminderDue(fresh, st, T0), false, '遊んでいない');
+  eq(backupReminderDue(played, st, T0), false, '初めて：この日から数える');
+  eq(backupReminderDue(played, st, T0 + 6 * day), false);
+  eq(backupReminderDue(played, st, T0 + 7 * day), true, '7日');
+  markExported(st, T0 + 7 * day);
+  eq(backupReminderDue(played, st, T0 + 8 * day), false, '書き出したら消える');
+  eq(backupReminderDue(played, st, T0 + 14 * day), true);
+  setSaveMeta({ snoozeUntil: T0 + 20 * day }, st);
+  eq(backupReminderDue(played, st, T0 + 15 * day), false, 'あとで');
+  eq(backupReminderDue(played, st, T0 + 21 * day), true);
+  setSaveMeta({ remind: false }, st);
+  eq(backupReminderDue(played, st, T0 + 30 * day), false, 'オフ');
+});
+
+test('セーブ（守り）：保存のたびに IndexedDB 用の写しも渡す', () => {
+  const st = memStorage(), got = [], keep = saveMirror;
+  saveMirror = json => got.push(json);
+  try {
+    saveProfile(Object.assign(newProfile(), { level: 7 }), st, T0);
+    eq(got.length, 1);
+    eq(got[0], st.getItem(GROWTH.SAVE_KEY));
+    eq(parseSave(got[0]).savedAt, T0);
+  } finally { saveMirror = keep; }
+});
+
 test('セーブ：データがない・壊れている・保存できない環境でも、初期状態で始められる', () => {
   eq(loadProfile(memStorage()), newProfile());
   const st = memStorage();

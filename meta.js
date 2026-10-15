@@ -77,6 +77,7 @@ function renderTitle() {
   const byLevel = {};
   locked.forEach(f => { (byLevel[GROWTH.UNLOCK[f]] = byLevel[GROWTH.UNLOCK[f]] || []).push(GROWTH.UNLOCK_NAMES[f]); });
   const lv = Object.keys(byLevel)[0];
+  if (typeof renderBackupNote === 'function') renderBackupNote(); // 「バックアップをおすすめします」（saveui.js）
   $('#home-note').textContent = lv ? `次はプレイヤーLv${lv}で「${byLevel[lv].join('・')}」が解放されます` : '';
   // タブのバッジ（開けられるパックの数）
   $('#tab-pack-badge').textContent = totalPacks(profile) > 0 ? String(totalPacks(profile)) : '';
@@ -108,7 +109,8 @@ function showRules() {
 function confirmReset() {
   showOverlay(`<div class="result">
     <h2>データリセット</h2>
-    <p>カード・レベル・ゴールド・魔石・デッキをすべて消して、最初からやり直します。元に戻せません。</p>
+    <p>カード・レベル・ゴールド・魔石・デッキをすべて消して、最初からやり直します。</p>
+    <p class="settings-note">リセットの前のデータは自動でバックアップします（⚙ 設定 → セーブデータ から戻せます）。</p>
     <button class="btn danger big" data-act="reset">リセットする</button>
     <button class="btn big" data-act="close-detail">やめる</button>
   </div>`);
@@ -711,6 +713,7 @@ function showSettings() {
       ? (FX.silent === 'play' ? '消音スイッチがオンでも、BGM と効果音を鳴らします' : '消音スイッチがオンのときは鳴らしません')
       : 'この端末のブラウザでは選べません（iOS 17 以降の Safari で選べます）。消音スイッチがオンのときの動きは端末に従います'}</p>
     <button class="btn big" data-act="music-room">🎵 曲と効果音を試聴する</button>
+    <button class="btn big" data-act="sv-menu">💾 セーブデータ（書き出し・読み込み・バックアップ）</button>
     <button class="btn big" data-act="more-guide">📖 攻略本を開く</button>
     <button class="btn big primary" data-act="close-detail">とじる</button>
   </div>`);
@@ -940,6 +943,7 @@ function bootTitle() {
   renderMuteButton();
   bgmRefresh(); // ホームの曲（最初のタップで鳴り始める）
   bgmProbeFiles(); // 自分の音楽ファイル（assets/bgm/）が置いてあるか調べる
+  saveBoot(); // セーブデータの守り：IndexedDB の写し・消さない依頼・読めなかったときの知らせ（saveui.js）
   // 日付が変わっていればクエストを更新し、ログインボーナスを渡す
   checkDaily();
 }
