@@ -192,8 +192,9 @@ function runPackOpening(pulls, typeId = 'normal') {
         stage.classList.remove('rev-epic', 'rev-legend');
         void stage.offsetWidth;
         // 高レアリティは特別演出：エピックは金の光が広がり、レジェンドは暗転して虹色の光とともに登場
-        if (rarity === 'legend') { stage.classList.add('rev-legend'); sfx('win'); }
-        else if (rarity === 'epic') { stage.classList.add('rev-epic'); sfx('buff'); }
+        // 高レアリティはファンファーレ（BGM がオフなら効果音）
+        if (rarity === 'legend') { stage.classList.add('rev-legend'); if (!bgmJingle('fanfareLegend')) sfx('win'); }
+        else if (rarity === 'epic') { stage.classList.add('rev-epic'); if (!bgmJingle('fanfareEpic')) sfx('buff'); }
         else sfx(rarity === 'rare' ? 'gem' : 'equip');
         hint.textContent = top === pulls.length - 1 ? 'タップで一覧へ' : 'タップで次のカードへ';
       } else {

@@ -499,6 +499,7 @@ async function showPack(type = 'normal') {
   if (fxOn()) {
     packOpening = true;
     hideOverlay();
+    bgmMoment('pack'); // パック開封の曲
     try { await runPackOpening(pulls, type); } finally { packOpening = false; }
   }
   showPackSummary(pulls, 1, pulls.gift ? [pulls.gift] : []);
@@ -507,6 +508,7 @@ async function showPack(type = 'normal') {
 // 引いたカードの一覧（初めて手に入れたカードには NEW）
 //   packs: 開けたパックの数（まとめて開けたときは2以上）　gifts: 入っていたヒーローのギフト [{ hero, n }]
 function showPackSummary(pulls, packs = 1, gifts = []) {
+  bgmMoment('pack');
   // 同じカードは1枚にまとめ、レアリティの高い順に並べる
   const merged = [];
   for (const p of pulls) {
@@ -588,6 +590,7 @@ function showDaily(bonus, bulk) {
 // ---------- イベント（特殊ルール戦） ----------
 
 function showEvent() {
+  bgmMoment('event');
   if (refreshEvent(profile)) { saveProfile(profile); renderTitle(); }
   const ev = currentEvent();
   const e = profile.event;
@@ -753,12 +756,20 @@ function showMusicRoom() {
   const songs = MUSIC_LIST.filter(([id]) => MUSIC[id]).map(([id, label]) =>
     `<button class="btn mr-song${playing === id ? ' on' : ''}" data-act="mr-song" data-song="${id}">${playing === id ? '■' : '▶'} ${label}</button>`).join('');
   const sounds = SFX_LIST.map(([id, label]) => `<button class="btn small mr-sfx" data-act="mr-sfx" data-sfx="${id}">${label}</button>`).join('');
+  const jingles = JINGLE_LIST.map(([id, label]) => `<button class="btn small" data-act="mr-jingle" data-song="${id}">${label}</button>`).join('');
+  const battle = playing && MUSIC[playing].parts.tTaiko;
+  const layers = [['tension', '消耗ダメージ'], ['climax', '残りわずか']].map(([k, label]) =>
+    `<button class="btn small${BGM.layers[k] ? ' on' : ''}" data-act="mr-layer" data-layer="${k}"${battle ? '' : ' disabled'}>${BGM.layers[k] ? '✓ ' : ''}${label}</button>`).join('');
   showOverlay(`<div class="result settings music-room">
     <h2>🎵 試聴</h2>
     ${volumeRowHtml('bgm', 'BGM')}
     ${volumeRowHtml('sfx', '効果音')}
     <p>曲（もう一度押すと止まる）</p>
     <div class="mr-grid">${songs}</div>
+    <p>戦況で足すパート（対戦の曲を流しているときに試せる）</p>
+    <div class="mr-grid">${layers}</div>
+    <p>ジングル・ファンファーレ</p>
+    <div class="mr-grid jingle">${jingles}</div>
     <p>効果音</p>
     <div class="mr-grid sfx">${sounds}</div>
     <p class="settings-note">${FX.bgmMute ? 'BGM がオフになっています。左のボタンでオンにすると聞けます' : '曲はループします。画面を閉じると、もとの曲に戻ります'}</p>
@@ -768,6 +779,7 @@ function showMusicRoom() {
 
 function musicRoomClose() {
   BGM.preview = null;
+  bgmLayers(false, false);
   bgmSync();
   showSettings();
 }
@@ -843,7 +855,7 @@ $('#overlay').addEventListener('change', e => { if (e.target.dataset && e.target
 $('#overlay').addEventListener('click', e => {
   const act = e.target.closest && e.target.closest('[data-act]');
   const name = act && act.dataset.act;
-  if (name === 'close-detail') { detailId = null; hideOverlay(); if (BGM.preview) { BGM.preview = null; bgmSync(); } }
+  if (name === 'close-detail') { detailId = null; hideOverlay(); if (BGM.preview) { BGM.preview = null; bgmLayers(false, false); bgmSync(); } }
   if (name === 'more-rules') showRules();
   if (name === 'more-guide') openGuide();
   if (name === 'more-stages') openStages();
@@ -878,8 +890,10 @@ $('#overlay').addEventListener('click', e => {
   }
   if (name === 'silent') { FX.silent = act.dataset.silent === 'play' ? 'play' : 'obey'; fxSaveSettings(); auApplySession(); showSettings(); }
   if (name === 'music-room') showMusicRoom();
-  if (name === 'mr-song') { BGM.preview = BGM.preview === act.dataset.song ? null : act.dataset.song; fxUnlock(); bgmSync(); showMusicRoom(); }
+  if (name === 'mr-song') { BGM.preview = BGM.preview === act.dataset.song ? null : act.dataset.song; bgmLayers(false, false); fxUnlock(); bgmSync(); showMusicRoom(); }
   if (name === 'mr-sfx') sfx(act.dataset.sfx);
+  if (name === 'mr-jingle') { fxUnlock(); if (!bgmJingle(act.dataset.song)) sfx(act.dataset.song === 'lose' ? 'lose' : 'win'); }
+  if (name === 'mr-layer') { const k = act.dataset.layer; bgmLayers(k === 'tension' ? !BGM.layers.tension : BGM.layers.tension, k === 'climax' ? !BGM.layers.climax : BGM.layers.climax); showMusicRoom(); }
   if (name === 'mr-close') musicRoomClose();
   if (name === 'auto-level') { FX.autoLevel = act.dataset.level === 'normal' ? 'normal' : 'strong'; fxSaveSettings(); showSettings(); }
   if (name === 'stage-go' && stageUnlocked(profile, act.dataset.stage)) {
@@ -925,6 +939,7 @@ function bootTitle() {
   renderTitle();
   renderMuteButton();
   bgmRefresh(); // ホームの曲（最初のタップで鳴り始める）
+  bgmProbeFiles(); // 自分の音楽ファイル（assets/bgm/）が置いてあるか調べる
   // 日付が変わっていればクエストを更新し、ログインボーナスを渡す
   checkDaily();
 }

@@ -1792,3 +1792,5 @@ h1 { font-size: 36px; letter-spacing: 1px; }
 .result.settings { gap: 8px; padding: 18px 16px; max-height: 92dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .result.settings h2 { font-size: 24px; }
 .result.settings > p:not(.settings-note) { align-self: flex-start; font-size: 13px; margin-top: 4px; }
+.mr-grid.jingle { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.mr-grid .btn.small { min-height: 40px; font-size: 12px; }

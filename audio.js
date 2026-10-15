@@ -82,6 +82,7 @@ function fxAudioCtx() {
     fxAudio = Object.assign({ ctx, waves: {}, sfxLive: [], sfxRecent: {}, voices: [] }, fxAudioChain(ctx));
     if (ctx.addEventListener) ctx.addEventListener('statechange', auOnState);
     auApplyVolumes(true);
+    for (const j of BGM_JINGLES) if (bgmFiles.status[j] === 'yes') bgmLoadFile(j); // 置いてあるジングルを先に読む
   }
   return fxAudio;
 }
@@ -385,7 +386,7 @@ function bgmCompile(song) {
     // 和音：1小節に1つ。'C,G' なら半分ずつ
     chords.forEach((tok, b) => {
       const parts = tok.split(',');
-      parts.forEach((c, i) => { chordsAt.push({ s: base + b * bar + i * bar / parts.length, len: bar / parts.length, ch: parseChord(c) }); });
+      parts.forEach((c, i) => { chordsAt.push({ s: base + b * bar + i * bar / parts.length, len: bar / parts.length, ch: transposeChord(parseChord(c), song.transpose || 0) }); });
     });
     // メロディ：'E5:4 r:2 …'（音:長さ）
     if (sec.mel) {
@@ -398,7 +399,7 @@ function bgmCompile(song) {
         const [n, len] = tok.split(':');
         const d = Number(len);
         if (!(d > 0)) throw new Error(`${song.id} ${sec.name}: 長さが読めない ${tok}`);
-        if (n !== 'r') events.push({ s: base + s, p: sec.melPart || 'mel', m: noteMidi(n), d, v: 0.9 + ((s % 8) === 0 ? 0.1 : 0) });
+        if (n !== 'r') events.push({ s: base + s, p: sec.melPart || 'mel', m: noteMidi(n) + (song.transpose || 0), d, v: 0.9 + ((s % 8) === 0 ? 0.1 : 0) });
         s += d;
       }
       if (s !== bars * bar) throw new Error(`${song.id} ${sec.name}: メロディの長さが小節と合わない（${s} / ${bars * bar}）`);
@@ -425,6 +426,11 @@ function bgmCompile(song) {
   }
   events.sort((x, y) => x.s - y.s);
   return { steps: base, stepSec: 60 / song.bpm / 4, events, chords: chordsAt, sections: sections.map(s => s.name) };
+}
+// 曲全体の調を変える（ボス戦のアレンジなど）
+function transposeChord(ch, n) {
+  if (!n) return ch;
+  return { ...ch, root: (ch.root + n + 120) % 12, bass: (ch.bass + n + 120) % 12 };
 }
 function chordAtStep(list, s) {
   let found = list[0];
@@ -468,6 +474,8 @@ const BGM = {
   cur: null,      // いま流れている曲 { id, song, plan, out, parts, base, idx }
   fading: [],     // 小さくしている途中の曲
   timer: null,
+  moment: null,   // 画面の上に出ている場面（'pack' パック開封・'event' イベント・'result' 勝敗の画面）
+  layers: { tension: false, climax: false }, // 戦況で足すパート（消耗ダメージ・残りモンスターが少ない）
 };
 const bgmCache = {};
 function bgmPlan(id) { return bgmCache[id] || (bgmCache[id] = bgmCompile(Object.assign({ id }, MUSIC[id]))); }
@@ -486,7 +494,11 @@ function bgmSync() {
   if (!a || a.ctx.state !== 'running') { if (!id && BGM.cur) bgmStop(0.05); return; }
   if (BGM.cur && BGM.cur.id === id) return;
   bgmStop(AUDIO.FADE);
-  if (id) bgmStart(id);
+  if (!id) return;
+  // 自分の音楽ファイル（assets/bgm/）があれば、そちらを流す
+  const f = bgmFiles.status[id];
+  if (f === 'yes' || f === 'ok') { bgmStartFile(id); return; }
+  bgmStart(id);
 }
 
 function bgmStart(id) {
@@ -499,7 +511,7 @@ function bgmStart(id) {
   const parts = {};
   for (const [pid, p] of Object.entries(song.parts)) {
     const g = ctx.createGain();
-    g.gain.value = p.vol == null ? 1 : p.vol;
+    g.gain.value = p.layer && !BGM.layers[p.layer] ? 0.0001 : p.vol == null ? 1 : p.vol;
     let head = g;
     if (p.pan && ctx.createStereoPanner) { const pan = ctx.createStereoPanner(); pan.pan.value = p.pan; g.connect(pan); head = pan; }
     head.connect(out);
@@ -518,6 +530,7 @@ function bgmStop(fade) {
   const a = fxAudio, t = a.ctx.currentTime;
   auRamp(cur.out.gain, 0.0001, t, fade / 4);
   cur.end = t + fade;
+  if (cur.src) { try { cur.src.stop(t + fade + 0.1); } catch (e) { /* もう止まっている */ } }
   BGM.fading.push(cur);
   setTimeout(() => {
     BGM.fading = BGM.fading.filter(x => x !== cur);
@@ -531,7 +544,7 @@ function bgmTick() {
   const a = fxAudio;
   if (!a || (!BGM.cur && !BGM.fading.length)) { if (BGM.timer) { clearInterval(BGM.timer); BGM.timer = null; } return; }
   if (a.ctx.state !== 'running') return;
-  for (const inst of [BGM.cur, ...BGM.fading]) if (inst) bgmTickOne(a, inst);
+  for (const inst of [BGM.cur, ...BGM.fading]) if (inst && inst.plan) bgmTickOne(a, inst);
 }
 function bgmTickOne(a, cur) {
   const now = a.ctx.currentTime, plan = cur.plan, st = plan.stepSec;
@@ -553,12 +566,155 @@ function bgmTickOne(a, cur) {
 // 同時に鳴る音の数をおさえる：上限を超えたら、伴奏から先に省く
 function bgmNote(cur, ev, t, st) {
   const a = fxAudio, part = cur.song.parts[ev.p];
+  if (part.layer && !BGM.layers[part.layer]) return; // 戦況で足すパートは、その戦況のときだけ
   a.voices = a.voices.filter(e => e > t);
   if (a.voices.length >= AUDIO.MUSIC_VOICES && part.kind !== 'mel' && part.kind !== 'bass') return;
   const inst = INSTRUMENTS[part.inst];
   const swing = cur.song.swing && ev.s % 4 === 2 ? cur.song.swing * st : 0;
   const end = inst(cur.parts[ev.p], t + swing, ev.d * st * (part.gate || 0.92), part.kind === 'drum' ? (part.f || 0) : midiFreq(ev.m + (part.shift || 0)), ev.v * (0.94 + Math.random() * 0.06));
   a.voices.push(end || t + ev.d * st);
+}
+
+
+// ---------- 戦況で足すパート ----------
+
+// 消耗ダメージ（tension）・残りモンスターが少ない（climax）。曲は切り替えず、パートを足し引きする
+function bgmLayers(tension, climax) {
+  const L = BGM.layers;
+  if (L.tension === !!tension && L.climax === !!climax) return;
+  L.tension = !!tension; L.climax = !!climax;
+  const a = fxAudio;
+  if (!a) return;
+  const t = a.ctx.currentTime;
+  for (const inst of [BGM.cur, ...BGM.fading]) {
+    if (!inst || !inst.plan) continue;
+    for (const [pid, p] of Object.entries(inst.song.parts)) {
+      if (!p.layer) continue;
+      const on = L[p.layer];
+      auRamp(inst.parts[pid].gain, on ? (p.vol == null ? 1 : p.vol) : 0.0001, t, on ? 0.7 : 0.5); // ゆっくり入る・抜ける
+    }
+  }
+}
+
+// 対戦の画面を描くたびに呼ぶ：戦況から、足すパートを決める
+function bgmBattleMood() {
+  const inBattle = typeof currentScreen !== 'undefined' && currentScreen === 'battle' && typeof state !== 'undefined' && state && !state.result
+    && !(typeof battleMode !== 'undefined' && battleMode.type === 'puzzle');
+  if (!inBattle || !state.turn) { bgmLayers(false, false); return; }
+  const tension = typeof attritionStart === 'function' && state.turn >= attritionStart(state);
+  const low = typeof monstersLeft === 'function' && state.players.some(p => monstersLeft(p) <= (typeof LOW_MONSTERS !== 'undefined' ? LOW_MONSTERS : 2));
+  bgmLayers(tension, low);
+}
+
+// ---------- ジングル・ファンファーレ（1回だけ流す短い曲） ----------
+
+// 流れている曲を少し下げてジングルを重ねる。流せたら true（BGM がオフなら false：代わりに効果音を鳴らす）
+function bgmJingle(id) {
+  const a = fxAudio && fxAudio.ctx.state === 'running' ? fxAudio : null;
+  if (FX.bgmMute || !MUSIC[id]) return false;
+  if (!a) { const p = fxResume(); if (p) p.catch(() => {}); return false; }
+  const ctx = a.ctx, t0 = ctx.currentTime + 0.03;
+  const out = ctx.createGain();
+  out.connect(a.music);
+  let len;
+  const file = bgmFiles.buf[id];
+  if (!file && bgmFiles.status[id] === 'yes') bgmLoadFile(id); // 次からはファイルで鳴らす
+  if (file) {
+    const src = ctx.createBufferSource();
+    src.buffer = file; src.connect(out); src.start(t0);
+    len = file.duration;
+  } else {
+    const song = MUSIC[id], plan = bgmPlan(id), st = plan.stepSec, parts = {};
+    for (const [pid, p] of Object.entries(song.parts)) {
+      const g = ctx.createGain();
+      g.gain.value = p.vol == null ? 1 : p.vol;
+      g.connect(out);
+      if (a.verb && p.rev) { const send = ctx.createGain(); send.gain.value = p.rev; g.connect(send).connect(a.verb); }
+      parts[pid] = g;
+    }
+    for (const ev of plan.events) {
+      const part = song.parts[ev.p];
+      INSTRUMENTS[part.inst](parts[ev.p], t0 + ev.s * st, ev.d * st * (part.gate || 0.92), part.kind === 'drum' ? (part.f || 0) : midiFreq(ev.m), ev.v);
+    }
+    len = plan.steps * st;
+  }
+  // 流れている曲は、ジングルの間だけ小さく
+  const cur = BGM.cur;
+  if (cur) { auRamp(cur.out.gain, 0.25, t0, 0.05); auRamp(cur.out.gain, 1, t0 + len, 0.4); }
+  setTimeout(() => { try { out.disconnect(); } catch (e) { /* もう外れている */ } }, (len + 3) * 1000);
+  return true;
+}
+
+// ---------- 自分の音楽ファイルに差し替える（assets/bgm/） ----------
+//   ファイルがあればそれを流し、なければコードで作った曲を流す。対応表は BGM_FILES（README.md にも一覧）。
+//   ブラウザの制限で、index.html をファイルとして直接開いたとき（file://）は読めないので、コードの曲になる。
+
+const BGM_DIR = 'assets/bgm/';
+const BGM_FILES = {
+  home: 'home.mp3', deck: 'deck.mp3', pack: 'pack.mp3', dungeon: 'dungeon.mp3', puzzle: 'puzzle.mp3', event: 'event.mp3',
+  plain: 'plain.mp3', forest: 'forest.mp3', volcano: 'volcano.mp3', sky: 'sky.mp3', swamp: 'swamp.mp3', castle: 'castle.mp3', lake: 'lake.mp3',
+  boss1: 'boss1.mp3', boss2: 'boss2.mp3', boss3: 'boss3.mp3', boss4: 'boss4.mp3', boss5: 'boss5.mp3',
+  win: 'win.mp3', lose: 'lose.mp3', fanfareEpic: 'fanfare-epic.mp3', fanfareLegend: 'fanfare-legend.mp3',
+};
+const BGM_JINGLES = ['win', 'lose', 'fanfareEpic', 'fanfareLegend'];
+const BGM_FILE_KEEP = 3; // 読み込んだ曲を覚えておく数（スマホのメモリを使いすぎない。ジングルは別）
+const bgmFiles = { status: {}, buf: {}, order: [] }; // status: 'yes' ファイルがある・'ok' 読み込み済み・'none' ない
+
+function bgmCanFetch() {
+  return typeof fetch === 'function' && typeof location !== 'undefined' && /^https?:$/.test(location.protocol);
+}
+
+// 起動時に、どのファイルが置いてあるかだけ調べる（中身は流すときに読む）
+function bgmProbeFiles() {
+  if (!bgmCanFetch()) return;
+  for (const [id, name] of Object.entries(BGM_FILES)) {
+    fetch(BGM_DIR + name, { method: 'HEAD', cache: 'no-cache' }).then(r => {
+      bgmFiles.status[id] = r.ok ? 'yes' : 'none';
+      if (r.ok && BGM_JINGLES.includes(id)) bgmLoadFile(id); // ジングルはすぐ鳴らしたいので先に読む
+      if (r.ok && bgmTarget() === id && BGM.cur && !BGM.cur.src) { BGM.cur.id = null; bgmSync(); } // いま流している曲なら差し替える
+    }, () => { bgmFiles.status[id] = 'none'; });
+  }
+}
+
+function bgmLoadFile(id) {
+  const a = fxAudio;
+  if (bgmFiles.buf[id]) return Promise.resolve(bgmFiles.buf[id]);
+  if (!a || !bgmCanFetch()) return Promise.resolve(null);
+  return fetch(BGM_DIR + BGM_FILES[id]).then(r => (r.ok ? r.arrayBuffer() : null)).then(data => {
+    if (!data) return null;
+    return new Promise((ok, ng) => { const p = a.ctx.decodeAudioData(data, ok, ng); if (p && p.then) p.then(ok, ng); });
+  }).then(buf => {
+    if (!buf) { bgmFiles.status[id] = 'none'; return null; }
+    bgmFiles.buf[id] = buf; bgmFiles.status[id] = 'ok';
+    if (!BGM_JINGLES.includes(id)) {
+      bgmFiles.order = bgmFiles.order.filter(x => x !== id).concat(id);
+      while (bgmFiles.order.length > BGM_FILE_KEEP) { const old = bgmFiles.order.shift(); delete bgmFiles.buf[old]; bgmFiles.status[old] = 'yes'; }
+    }
+    return buf;
+  }, () => { bgmFiles.status[id] = 'none'; return null; });
+}
+
+// ファイルの曲を流す（読み込みが終わってから、大きくしながら始める）。読めなければコードの曲にする
+function bgmStartFile(id) {
+  const a = fxAudio, ctx = a.ctx;
+  const out = ctx.createGain();
+  out.gain.value = 0.0001;
+  out.connect(a.music);
+  const cur = { id, file: true, out, src: null };
+  BGM.cur = cur;
+  if (!BGM.timer) BGM.timer = setInterval(bgmTick, AUDIO.TICK_MS);
+  bgmLoadFile(id).then(buf => {
+    if (BGM.cur !== cur) return; // 読んでいる間に場面が変わった
+    if (!buf) { BGM.cur = null; try { out.disconnect(); } catch (e) { /* もう外れている */ } bgmStart(id); return; }
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.loop = true; // ファイルの終わりから頭へ、すき間なくつなぐ
+    src.connect(out);
+    const t0 = ctx.currentTime + 0.05;
+    src.start(t0);
+    out.gain.setValueAtTime(0.0001, ctx.currentTime);
+    out.gain.linearRampToValueAtTime(1, t0 + AUDIO.FADE);
+    cur.src = src;
+  });
 }
 
 // ---------- 効果音 ----------
@@ -788,14 +944,38 @@ function sfx(name) {
 // 地形の景色 → 曲
 const BGM_OF_SCENE = { meadow: 'plain', forest: 'forest', volcano: 'volcano', sky: 'sky', swamp: 'swamp', castle: 'castle', lake: 'lake' };
 
+// 画面ごとの曲（対戦以外）
+const BGM_OF_SCREEN = { title: 'home', stages: 'home', history: 'home', decks: 'deck', deck: 'deck', collection: 'deck', dungeon: 'dungeon', puzzles: 'puzzle' };
+// 画面の上に出る場面の曲（null は無音：勝敗の画面はジングルだけ）
+const BGM_OF_MOMENT = { pack: 'pack', event: 'event', result: null };
+
 // いまの画面から、流す曲を決める
 function bgmForScene() {
+  if (BGM.moment && BGM.moment in BGM_OF_MOMENT) return BGM_OF_MOMENT[BGM.moment];
   const scr = typeof currentScreen !== 'undefined' ? currentScreen : 'title';
   if (scr === 'battle' && typeof state !== 'undefined' && state) {
+    const mode = typeof battleMode !== 'undefined' ? battleMode : {};
+    if (mode.type === 'puzzle') return 'puzzle';
+    if (mode.type === 'event') return 'event';
+    if (mode.type === 'stage' && mode.stage && mode.stage.boss && MUSIC['boss' + mode.stage.chapter]) return 'boss' + mode.stage.chapter;
     const scene = state.terrain ? state.terrain.scene : null;
     const id = BGM_OF_SCENE[scene];
     return MUSIC[id] ? id : 'plain';
   }
-  return 'home';
+  return BGM_OF_SCREEN[scr] || 'home';
 }
-function bgmRefresh() { bgmPlay(bgmForScene()); }
+function bgmRefresh() {
+  if (typeof currentScreen === 'undefined' || currentScreen !== 'battle' || BGM.moment) bgmLayers(false, false);
+  bgmPlay(bgmForScene());
+}
+// 画面の上に場面を出す（パック開封・イベント・勝敗）。小窓を閉じると（hideOverlay）もとの曲に戻る
+function bgmMoment(name) {
+  BGM.moment = name;
+  bgmRefresh();
+}
+function bgmMomentEnd() {
+  if (!BGM.moment) return;
+  BGM.moment = null;
+  // すぐ後に画面が切り替わることが多い（小窓を閉じて → 対戦へ）。切り替わったあとの画面で曲を決める
+  Promise.resolve().then(bgmRefresh);
+}

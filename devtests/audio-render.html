@@ -17,26 +17,36 @@ async function renderWith(sec, play) {
 }
 async function main() {
   const lines = [];
-  for (const id of Object.keys(MUSIC)) {
-    const r = await renderWith(12, ctx => {
+  const runs = [];
+  for (const id of Object.keys(MUSIC)) { runs.push([id, false]); if (MUSIC[id].parts.tTaiko) runs.push([id, true]); }
+  // WebKit は1ページで10回ほど書き出すと止まるので、?from=0&n=8 のように分けて開く（効果音は from=0 のときだけ）
+  const q = new URLSearchParams(location.search), from = Number(q.get('from') || 0), cnt = Number(q.get('n') || 8);
+  runs.splice(0, from); runs.splice(cnt);
+  for (const [id, layered] of runs) {
+    BGM.layers.tension = BGM.layers.climax = layered;
+    const sec = MUSIC[id].jingle ? 6 : 10;
+    const r = await renderWith(sec, ctx => {
       const plan = bgmPlan(id), song = MUSIC[id];
       const out = ctx.createGain(); out.connect(fxAudio.music);
       const parts = {};
-      for (const [pid, p] of Object.entries(song.parts)) { const g = ctx.createGain(); g.gain.value = p.vol == null ? 1 : p.vol; g.connect(out); if (p.rev) { const s = ctx.createGain(); s.gain.value = p.rev; g.connect(s).connect(fxAudio.verb); } parts[pid] = g; }
+      for (const [pid, p] of Object.entries(song.parts)) { const g = ctx.createGain(); g.gain.value = p.layer && !BGM.layers[p.layer] ? 0 : p.vol == null ? 1 : p.vol; g.connect(out); if (p.rev) { const s = ctx.createGain(); s.gain.value = p.rev; g.connect(s).connect(fxAudio.verb); } parts[pid] = g; }
       const cur = { id, song, plan, out, parts, base: 0.05, idx: 0 };
       let voicesMax = 0;
-      for (let t = 0; t < 12; t += 0.05) { Object.defineProperty(ctx, 'currentTime', { value: t, configurable: true }); bgmTickOne(fxAudio, cur); voicesMax = Math.max(voicesMax, fxAudio.voices.filter(e => e > t).length); }
+      for (let t = 0; t < sec; t += 0.05) { Object.defineProperty(ctx, 'currentTime', { value: t, configurable: true }); bgmTickOne(fxAudio, cur); voicesMax = Math.max(voicesMax, fxAudio.voices.filter(e => e > t).length); }
       delete ctx.currentTime;
-      lines.push(`${id}: 同時に鳴る音の最大 ${voicesMax}`);
+      cur.voicesMax = voicesMax; window.__vm = voicesMax;
     });
-    lines.push(`BGM ${id}: peak ${r.peak} rms ${r.rms} nan ${r.nan} ${r.errors.join(' ')}`);
+    document.getElementById('out').textContent = lines.join('\n') + '\n…' + id;
+    lines.push(`${id}${layered ? '+戦況' : ''}: peak ${r.peak} rms ${r.rms} 同時 ${window.__vm} nan ${r.nan} ${r.errors.join(' ')}`);
   }
-  for (const k of Object.keys(SFX)) {
-    const r = await renderWith(2, ctx => { Object.defineProperty(ctx, 'currentTime', { value: 0, configurable: true }); sfxBoost = SFX_GAIN[k] || 1; SFX[k](); sfxBoost = 1; });
-    lines.push(`SFX ${k}: peak ${r.peak} rms ${r.rms} nan ${r.nan} ${r.errors.join(' ')}`);
+  for (const k of (from === 0 ? Object.keys(SFX) : [])) {
+    const r = await renderWith(1.5, ctx => { Object.defineProperty(ctx, 'currentTime', { value: 0, configurable: true }); sfxBoost = SFX_GAIN[k] || 1; SFX[k](); sfxBoost = 1; });
+    if (r.errors.length || r.nan || r.peak > 0.95) lines.push(`SFX ${k}: peak ${r.peak} rms ${r.rms} nan ${r.nan} ${r.errors.join(' ')}`);
   }
+  lines.push('効果音 ' + Object.keys(SFX).length + ' 種：問題があるものだけ上に出す');
   document.getElementById('out').textContent = lines.join('\n');
   window.__done = lines.join('\n');
 }
+window.onerror = (m) => { document.getElementById('out').textContent = 'ERROR ' + m; };
 main().catch(e => { document.getElementById('out').textContent = 'ERROR ' + e.message + '\n' + e.stack; });
 </script>

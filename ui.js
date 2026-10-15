@@ -106,7 +106,7 @@ function showOverlay(html) {
   el.classList.remove('hidden');
 }
 
-function hideOverlay() { $('#overlay').classList.add('hidden'); if (tabOver) { tabOver = null; renderTabs(); } }
+function hideOverlay() { $('#overlay').classList.add('hidden'); if (tabOver) { tabOver = null; renderTabs(); } bgmMomentEnd(); }
 
 // 大きな文字の演出。ターンの切り替えと攻撃フェーズは英字の見出しつき
 const BANNER_STYLE = {
@@ -500,6 +500,7 @@ function render() {
   $('#message').textContent = message;
   $('#hand').innerHTML = p.hand.map(h => handCardHtml(h, p)).join('');
   $('#hand').classList.toggle('locked', busy);
+  bgmBattleMood(); // 戦況に合わせて BGM のパートを足す（audio.js）
   layoutHand();
   renderDetail();
 
@@ -1278,7 +1279,8 @@ function showResult(result) {
   const cls = win ? 'win' : 'lose';
   // 報酬は1試合に1回だけ渡して保存する
   if (!state.reward) {
-    sfx(win ? 'win' : 'lose');
+    bgmMoment('result'); // 曲を止めて、勝利・敗北のジングル（BGM がオフなら効果音）
+    if (!bgmJingle(win ? 'win' : 'lose')) sfx(win ? 'win' : 'lose');
     // ダンジョンの戦闘では、通常の報酬（経験値・ゴールド）は出ない。結果は挑戦に反映する
     const dungeon = battleMode.type === 'dungeon';
     state.reward = dungeon ? null : battleReward(profile, result.reason === 'surrender' ? 'surrender' : win ? 'win' : 'loss');

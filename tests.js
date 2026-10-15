@@ -5932,6 +5932,7 @@ test('効果音：鳴っている間は BGM の音量を少し下げ、すぐ戻
 
 test('BGM：どの曲も読み込めて、30秒〜1分のループで、A・B のような構成になっている', () => {
   for (const id of Object.keys(MUSIC)) {
+    if (MUSIC[id].jingle) continue;
     const song = MUSIC[id], plan = bgmCompile(Object.assign({ id }, song));
     const sec = plan.steps * plan.stepSec;
     eq(sec >= 30 && sec <= 60, true, `${id} の長さ ${sec.toFixed(1)} 秒`);
@@ -5947,7 +5948,7 @@ test('BGM：どの曲も読み込めて、30秒〜1分のループで、A・B �
 });
 
 test('BGM：ループの終わりは、最初の和音へ戻りたくなる和音で終わり、メロディも近い音でつながる', () => {
-  for (const id of Object.keys(MUSIC)) {
+  for (const id of Object.keys(MUSIC).filter(k => !MUSIC[k].jingle)) {
     const plan = bgmCompile(Object.assign({ id }, MUSIC[id]));
     const first = plan.chords[0].ch, last = plan.chords[plan.chords.length - 1].ch;
     const up = (last.root - first.root + 12) % 12;
@@ -6108,9 +6109,198 @@ test('音の設定：iPhone の消音スイッチ（audioSession がある端末
   } finally { FX.silent = keep; if (oldNav === undefined) delete globalThis.navigator; else globalThis.navigator = oldNav; }
 });
 
-test('BGM：どの地形でも曲が決まり、対戦以外の画面はホームの曲', () => {
-  for (const t of TERRAINS) eq(!!MUSIC[BGM_OF_SCENE[t.scene]] || BGM_OF_SCENE[t.scene] === 'lake', true, t.id);
-  eq(bgmForScene(), 'home');
+// 画面の状態（ui.js の変数）をまねて、流す曲を調べる
+function withScene(screen, st, mode, fn) {
+  const g = globalThis, keep = { currentScreen: g.currentScreen, state: g.state, battleMode: g.battleMode }, moment = BGM.moment;
+  g.currentScreen = screen; g.state = st; g.battleMode = mode;
+  try { return fn(); } finally {
+    BGM.moment = moment;
+    for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete g[k]; else g[k] = v; }
+  }
+}
+
+test('BGM：場面ごとの曲（画面・地形・ボスの章・パズル・イベント・パック・勝敗）', () => {
+  const wanted = ['home', 'deck', 'pack', 'dungeon', 'puzzle', 'event', 'plain', 'forest', 'volcano', 'sky', 'swamp', 'castle', 'lake', 'boss1', 'boss2', 'boss3', 'boss4', 'boss5', 'win', 'lose', 'fanfareEpic', 'fanfareLegend'];
+  for (const id of wanted) eq(!!MUSIC[id], true, id);
+  for (const id of Object.keys(MUSIC)) eq(!!BGM_FILES[id], true, `${id} のファイル名`);
+  eq(withScene('title', null, null, bgmForScene), 'home');
+  eq(withScene('collection', null, null, bgmForScene), 'deck');
+  eq(withScene('deck', null, null, bgmForScene), 'deck');
+  eq(withScene('dungeon', null, null, bgmForScene), 'dungeon');
+  eq(withScene('puzzles', null, null, bgmForScene), 'puzzle');
+  for (const t of TERRAINS) eq(withScene('battle', { terrain: t }, { type: 'free' }, bgmForScene), BGM_OF_SCENE[t.scene], t.id);
+  eq(withScene('battle', { terrain: TERRAIN_BY_ID.mist }, { type: 'dungeon' }, bgmForScene), 'lake', 'ダンジョンの戦闘は地形の曲');
+  for (const st of STAGES.filter(x => x.boss)) eq(withScene('battle', { terrain: TERRAIN_BY_ID[st.terrain] }, { type: 'stage', stage: st }, bgmForScene), 'boss' + st.chapter, st.id);
+  const normal = STAGES.find(x => !x.boss);
+  eq(withScene('battle', { terrain: TERRAIN_BY_ID[normal.terrain] }, { type: 'stage', stage: normal }, bgmForScene), BGM_OF_SCENE[TERRAIN_BY_ID[normal.terrain].scene]);
+  eq(withScene('battle', { terrain: TERRAIN_BY_ID.plain }, { type: 'puzzle' }, bgmForScene), 'puzzle');
+  eq(withScene('battle', { terrain: TERRAIN_BY_ID.plain }, { type: 'event' }, bgmForScene), 'event');
+  eq(withScene('title', null, null, () => { BGM.moment = 'pack'; return bgmForScene(); }), 'pack');
+  eq(withScene('title', null, null, () => { BGM.moment = 'event'; return bgmForScene(); }), 'event');
+  eq(withScene('battle', { terrain: TERRAIN_BY_ID.plain }, { type: 'free' }, () => { BGM.moment = 'result'; return bgmForScene(); }), null, '勝敗の画面はジングルだけ');
+});
+
+test('BGM：ボス戦は1つのテーマを、章ごとに調・速さ・楽器を変えてアレンジし、通常戦より速い', () => {
+  const bosses = [1, 2, 3, 4, 5].map(n => MUSIC['boss' + n]);
+  eq(new Set(bosses.map(b => b.transpose)).size, 5, '調が章ごとに違う');
+  eq(new Set(bosses.map(b => b.parts.lead.inst + b.parts.lead2.inst)).size >= 4, true, '楽器が違う');
+  const normalMax = Math.max(...['plain', 'forest', 'sky', 'swamp', 'castle', 'lake'].map(id => MUSIC[id].bpm));
+  for (const b of bosses) {
+    eq(b.bpm > normalMax, true, `${b.name} は速い`);
+    eq(Object.values(b.parts).some(p => ['taiko', 'kick', 'timpani'].includes(p.inst) && !p.layer), true, `${b.name} は重い打楽器`);
+    eq(b.sections.A.mel, BOSS_THEME.A.mel, '同じテーマ');
+  }
+  // 調を変えたら、メロディと和音が同じだけ動く
+  const p0 = bgmPlan('boss1'), p3 = bgmPlan('boss3');
+  const m0 = p0.events.find(e => e.p === 'lead'), m3 = p3.events.find(e => e.p === 'lead');
+  eq(m3.m - m0.m, MUSIC.boss3.transpose);
+  eq((p3.chords[0].ch.root - p0.chords[0].ch.root + 12) % 12, (MUSIC.boss3.transpose + 12) % 12);
+});
+
+test('BGM：ジングル・ファンファーレは数秒で、最後は落ち着く和音で終わる', () => {
+  for (const id of ['win', 'lose', 'fanfareEpic', 'fanfareLegend']) {
+    const plan = bgmPlan(id), sec = plan.steps * plan.stepSec;
+    eq(MUSIC[id].jingle, true);
+    eq(sec >= 1 && sec <= 6, true, `${id}: ${sec.toFixed(1)} 秒`);
+  }
+  eq(bgmPlan('fanfareLegend').steps > bgmPlan('fanfareEpic').steps, true, 'レジェンドは特別に長い');
+});
+
+test('BGM：ジングルは流れている曲を少し下げて重ねる。BGM がオフなら false（効果音で代わりに鳴らす）', () => {
+  withFakeAudio(made => {
+    fxUnlock();
+    bgmPlay('pack');
+    const cur = BGM.cur, before = made.osc;
+    eq(bgmJingle('fanfareLegend'), true);
+    eq(made.osc > before, true, 'ジングルの音が鳴る');
+    const ev = cur.out.gain.events.filter(e => e[0] === 'target').map(e => e[1]);
+    eq(ev, [0.25, 1], '曲を下げて、終わったら戻す');
+    FX.bgmMute = true;
+    eq(bgmJingle('win'), false);
+    FX.bgmMute = false;
+    eq(bgmJingle('なし'), false);
+  });
+});
+
+test('BGM：戦況のパートは、その戦況のときだけ鳴らし、ゆっくり足す・引く（曲は切り替えない）', () => {
+  withFakeAudio(made => {
+    fxUnlock();
+    bgmLayers(false, false);
+    bgmPlay('forest');
+    const cur = BGM.cur, plan = bgmPlan('forest');
+    const ev = k => plan.events.find(e => MUSIC.forest.parts[e.p].layer === k);
+    const count = (e) => { const b = made.osc + made.noise; fxAudio.voices = []; bgmNote(cur, e, 1, plan.stepSec); return made.osc + made.noise - b; };
+    eq(count(ev('tension')), 0, '消耗ダメージの前は鳴らない');
+    eq(cur.parts.tTaiko.gain.value < 0.01, true, '最初は音量0');
+    bgmLayers(true, false);
+    eq(BGM.cur, cur, '曲は同じまま');
+    eq(count(ev('tension')) > 0, true, '消耗ダメージのパートが鳴る');
+    eq(count(ev('climax')), 0);
+    eq(cur.parts.tTaiko.gain.events.some(e => e[0] === 'target' && e[1] > 0.5), true, 'ゆっくり大きくなる');
+    bgmLayers(true, true);
+    eq(count(ev('climax')) > 0, true, '残りわずかのパートも足す');
+    bgmLayers(false, false);
+    eq(count(ev('tension')) + count(ev('climax')), 0, '戻せば鳴らない');
+    bgmLayers(true, false);
+    bgmPlay('volcano');
+    eq(BGM.cur.parts.tTaiko.gain.value > 0.5, true, '次の対戦の曲も、いまの戦況で始まる');
+    bgmLayers(false, false);
+  });
+});
+
+// 残りモンスターが left 体の側（場に並べるだけ）
+const mkPlayerLeft = left => ({ slots: Array.from({ length: left }, () => ({ hp: 1 })), hand: [], deck: [] });
+const LOW_MONSTERS_FOR_TEST = 2; // ui.js の LOW_MONSTERS（テストでは読み込まないので、audio.js も2を使う）
+
+test('BGM：戦況の判定（ターン27以降・残りモンスターが少ない・決着後とパズルは足さない）', () => {
+  const keep = { ...BGM.layers };
+  const mood = (st, mode) => withScene('battle', st, mode, () => { bgmBattleMood(); return [BGM.layers.tension, BGM.layers.climax]; });
+  try {
+    const lots = () => [mkPlayerLeft(6), mkPlayerLeft(6)];
+    eq(mood({ turn: 5, players: lots() }, { type: 'free' }), [false, false]);
+    eq(mood({ turn: CONFIG.ATTRITION_START, players: lots() }, { type: 'free' }), [true, false]);
+    eq(mood({ turn: 5, players: [mkPlayerLeft(6), mkPlayerLeft(LOW_MONSTERS_FOR_TEST)] }, { type: 'free' }), [false, true]);
+    eq(mood({ turn: 30, players: [mkPlayerLeft(1), mkPlayerLeft(6)], result: { winner: 1 } }, { type: 'free' }), [false, false], '決着したら戻す');
+    eq(mood({ turn: 30, players: [mkPlayerLeft(1), mkPlayerLeft(1)] }, { type: 'puzzle' }), [false, false], 'パズルでは足さない');
+  } finally { BGM.layers.tension = keep.tension; BGM.layers.climax = keep.climax; }
+});
+
+// 読み込み（Promise）の続きを、その場で進める（jsc だけにある関数。ブラウザではこのテストを飛ばす）
+const drain = () => drainMicrotasks();
+
+test('BGM：自分の音楽ファイル（assets/bgm/）があれば流し、なければコードの曲にする', () => {
+  if (typeof drainMicrotasks !== 'function') return;
+  withFakeAudio(made => {
+    const g = globalThis, keep = { fetch: g.fetch, location: g.location };
+    const has = { 'assets/bgm/forest.mp3': true, 'assets/bgm/win.mp3': true };
+    const thenable = v => ({ then: (ok) => { const r = ok(v); return r && r.then ? r : thenable(r); } });
+    g.location = { protocol: 'https:' };
+    g.fetch = (url, opts) => thenable({ ok: !!has[url], arrayBuffer: () => thenable({ bytes: url }) });
+    made.last = null;
+    const oldStatus = { ...bgmFiles.status }, oldBuf = { ...bgmFiles.buf };
+    try {
+      bgmProbeFiles(); drain();
+      eq(bgmFiles.status.forest, 'yes');
+      eq(bgmFiles.status.home, 'none');
+      fxUnlock();
+      fxAudio.ctx.decodeAudioData = (data, ok) => ok({ duration: 40, from: data.bytes });
+      bgmPlay('home');
+      eq(!!BGM.cur.plan, true, 'ファイルがない曲は、コードで演奏');
+      bgmPlay('forest'); drain();
+      eq(BGM.cur.file, true, 'ファイルがある曲は、ファイルを流す');
+      eq(BGM.cur.src.buffer.from, 'assets/bgm/forest.mp3');
+      eq(BGM.cur.src.loop, true, 'ループする');
+      bgmPlay('home');
+      eq(BGM.fading.some(x => x.file && x.end), true, 'ファイルの曲もクロスフェードで止める');
+      // 壊れたファイル：読めなければコードの曲にする
+      has['assets/bgm/sky.mp3'] = true; bgmFiles.status.sky = 'yes';
+      fxAudio.ctx.decodeAudioData = (data, ok, ng) => ng(new Error('読めない'));
+      bgmPlay('sky'); drain();
+      eq(!!(BGM.cur && BGM.cur.plan), true, '読めないファイルは、コードの曲');
+      eq(bgmFiles.status.sky, 'none');
+    } finally {
+      bgmFiles.status = oldStatus; bgmFiles.buf = oldBuf; bgmFiles.order = [];
+      for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete g[k]; else g[k] = v; }
+    }
+  });
+});
+
+test('BGM：ファイルの曲はメモリを使いすぎないよう、読みこんだ数を抑える', () => {
+  if (typeof drainMicrotasks !== 'function') return;
+  withFakeAudio(made => {
+    const g = globalThis, keep = { fetch: g.fetch, location: g.location };
+    const thenable = v => ({ then: (ok) => { const r = ok(v); return r && r.then ? r : thenable(r); } });
+    g.location = { protocol: 'http:' };
+    g.fetch = () => thenable({ ok: true, arrayBuffer: () => thenable({}) });
+    const oldStatus = { ...bgmFiles.status }, oldBuf = { ...bgmFiles.buf };
+    try {
+      fxUnlock();
+      fxAudio.ctx.decodeAudioData = (data, ok) => ok({ duration: 30 });
+      for (const id of ['home', 'deck', 'plain', 'forest', 'sky']) { bgmFiles.status[id] = 'yes'; bgmPlay(id); drain(); }
+      eq(Object.keys(bgmFiles.buf).length, BGM_FILE_KEEP);
+      eq(!!bgmFiles.buf.sky && !bgmFiles.buf.home, true, '古いものから手放す');
+      eq(bgmFiles.status.home, 'yes', '手放してもファイルはあると覚えておく');
+    } finally {
+      bgmFiles.status = oldStatus; bgmFiles.buf = oldBuf; bgmFiles.order = [];
+      for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete g[k]; else g[k] = v; }
+    }
+  });
+});
+
+test('BGM：ファイルとして直接開いたとき（file://）は、ファイルを探さない', () => {
+  const g = globalThis, keep = { fetch: g.fetch, location: g.location };
+  let calls = 0;
+  g.fetch = () => { calls++; return { then() {} }; };
+  g.location = { protocol: 'file:' };
+  try { bgmProbeFiles(); eq(calls, 0); eq(bgmCanFetch(), false); } finally {
+    for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete g[k]; else g[k] = v; }
+  }
+});
+
+test('README：音楽ファイルの対応表が BGM_FILES と合っている', () => {
+  if (typeof readFile !== 'function') return; // ブラウザでは読めないので飛ばす
+  const md = readFile('README.md');
+  for (const [id, name] of Object.entries(BGM_FILES)) eq(md.includes('`' + name + '`'), true, `${id}: ${name}`);
 });
 
 test('パック演出：パックの光り方は、中身でいちばん高いレアリティで決まる', () => {
