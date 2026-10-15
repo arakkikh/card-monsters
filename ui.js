@@ -91,6 +91,7 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(el => el.classList.toggle('active', el.id === 'screen-' + name));
   $('#app').classList.toggle('in-battle', name === 'battle'); // 対戦中はタブバーを隠す
   renderTabs();
+  bgmRefresh(); // 画面に合わせた曲へ（audio.js）
 }
 // 今いるタブを光らせる。over: パック・ヒーローの小窓を開いているあいだ、そのタブを光らせる
 let tabOver = null;

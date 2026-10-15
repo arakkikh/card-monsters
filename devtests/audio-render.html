@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8"><title>音の書き出しチェック</title>
+<!-- 使い方：このファイルと fx.js music.js audio.js を同じフォルダに置いてブラウザで開く（ゲームのフォルダの上から開くなら、src の ../ のままでよい） -->
+<body style="background:#fff;color:#000;font:14px monospace;white-space:pre" id="out">準備中…</body>
+<script src="../fx.js"></script><script src="../music.js"></script><script src="../audio.js"></script>
+<script>
+// 開発用：BGM と効果音を OfflineAudioContext で実際に書き出し、エラー・音割れ・音量を調べる
+async function renderWith(sec, play) {
+  const ctx = new OfflineAudioContext(2, 44100 * sec, 44100);
+  const errors = [];
+  fxAudio = Object.assign({ ctx, waves: {}, sfxLive: [], sfxRecent: {}, voices: [] }, fxAudioChain(ctx));
+  fxAudio.music.gain.value = auMusicGain(); fxAudio.sfx.gain.value = auSfxGain();
+  try { play(ctx); } catch (e) { errors.push(e.message); }
+  const buf = await ctx.startRendering();
+  let peak = 0, sum = 0, n = 0, nan = 0;
+  for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < d.length; i++) { const v = d[i]; if (v !== v) { nan++; continue; } const a = Math.abs(v); if (a > peak) peak = a; sum += v * v; n++; } }
+  return { peak: peak.toFixed(2), rms: Math.sqrt(sum / n).toFixed(3), nan, errors };
+}
+async function main() {
+  const lines = [];
+  for (const id of Object.keys(MUSIC)) {
+    const r = await renderWith(12, ctx => {
+      const plan = bgmPlan(id), song = MUSIC[id];
+      const out = ctx.createGain(); out.connect(fxAudio.music);
+      const parts = {};
+      for (const [pid, p] of Object.entries(song.parts)) { const g = ctx.createGain(); g.gain.value = p.vol == null ? 1 : p.vol; g.connect(out); if (p.rev) { const s = ctx.createGain(); s.gain.value = p.rev; g.connect(s).connect(fxAudio.verb); } parts[pid] = g; }
+      const cur = { id, song, plan, out, parts, base: 0.05, idx: 0 };
+      let voicesMax = 0;
+      for (let t = 0; t < 12; t += 0.05) { Object.defineProperty(ctx, 'currentTime', { value: t, configurable: true }); bgmTickOne(fxAudio, cur); voicesMax = Math.max(voicesMax, fxAudio.voices.filter(e => e > t).length); }
+      delete ctx.currentTime;
+      lines.push(`${id}: 同時に鳴る音の最大 ${voicesMax}`);
+    });
+    lines.push(`BGM ${id}: peak ${r.peak} rms ${r.rms} nan ${r.nan} ${r.errors.join(' ')}`);
+  }
+  for (const k of Object.keys(SFX)) {
+    const r = await renderWith(2, ctx => { Object.defineProperty(ctx, 'currentTime', { value: 0, configurable: true }); sfxBoost = SFX_GAIN[k] || 1; SFX[k](); sfxBoost = 1; });
+    lines.push(`SFX ${k}: peak ${r.peak} rms ${r.rms} nan ${r.nan} ${r.errors.join(' ')}`);
+  }
+  document.getElementById('out').textContent = lines.join('\n');
+  window.__done = lines.join('\n');
+}
+main().catch(e => { document.getElementById('out').textContent = 'ERROR ' + e.message + '\n' + e.stack; });
+</script>

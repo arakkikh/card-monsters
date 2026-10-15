@@ -5770,9 +5770,10 @@ test('演出：効果音は攻撃の種類ごとに別の音で、演出に使�
 
 // にせの音の出口。Safari と同じく「止まった状態」で作られ、resume() で動き出す
 function withFakeAudio(fn, { resumeNow = true } = {}) {
-  const made = { ctx: 0, osc: 0, noise: 0, resume: 0, limiter: 0, pending: [] };
-  const param = () => ({ value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} });
-  const node = extra => Object.assign({ connect(to) { this.to = to; return to; }, start() {}, stop() {} }, extra);
+  const made = { ctx: 0, osc: 0, noise: 0, resume: 0, suspend: 0, limiter: 0, pending: [], starts: [] };
+  const param = () => ({ value: 0, events: [], setValueAtTime(v, t) { this.events.push(['set', v, t]); }, exponentialRampToValueAtTime(v, t) { this.events.push(['exp', v, t]); },
+    linearRampToValueAtTime(v, t) { this.events.push(['lin', v, t]); }, setTargetAtTime(v, t) { this.events.push(['target', v, t]); }, cancelScheduledValues() {} });
+  const node = extra => Object.assign({ connect(to) { this.to = to; return to; }, disconnect() {}, start(t) { made.starts.push(t); }, stop() {} }, extra);
   class FakeAC {
     constructor() { made.ctx++; made.last = this; this.state = 'suspended'; this.currentTime = 0; this.sampleRate = 8000; this.destination = node({ dest: true }); }
     resume() {
@@ -5781,19 +5782,29 @@ function withFakeAudio(fn, { resumeNow = true } = {}) {
       if (resumeNow) go();
       return { then: (done) => { if (resumeNow) done(); else made.pending.push(() => { go(); done(); }); }, catch() {} };
     }
+    suspend() { made.suspend++; this.state = 'suspended'; return { then() {}, catch() {} }; }
     createGain() { return node({ gain: param() }); }
-    createOscillator() { made.osc++; return node({ frequency: param() }); }
+    createOscillator() { made.osc++; return node({ frequency: param(), detune: param(), setPeriodicWave() {} }); }
     createBiquadFilter() { return node({ frequency: param(), Q: param() }); }
     createDynamicsCompressor() { made.limiter++; return node({ threshold: param(), knee: param(), ratio: param(), attack: param(), release: param() }); }
+    createConvolver() { return node({}); }
+    createStereoPanner() { return node({ pan: param() }); }
+    createPeriodicWave() { return {}; }
     createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
     createBufferSource() { made.noise++; return node({}); }
   }
   const had = typeof window !== 'undefined', oldWin = had ? window : undefined;
-  const oldAudio = fxAudio, oldMute = FX.mute, oldNow = Date.now;
+  const keep = { mute: FX.mute, bgmMute: FX.bgmMute, bgm: FX.bgm, sfx: FX.sfx };
+  const oldAudio = fxAudio, oldNow = Date.now, oldBgm = { ...BGM };
   globalThis.window = { AudioContext: FakeAC };
-  fxAudio = null; FX.mute = false;
+  const oldSI = globalThis.setInterval, oldCI = globalThis.clearInterval;
+  globalThis.setInterval = () => 1; globalThis.clearInterval = () => {}; // 予約はテストの中で bgmTick() を呼んで進める
+  fxAudio = null; FX.mute = false; FX.bgmMute = false;
+  Object.assign(BGM, { want: null, preview: null, cur: null, fading: [], timer: null });
   try { fn(made); } finally {
-    fxAudio = oldAudio; FX.mute = oldMute; Date.now = oldNow;
+    globalThis.setInterval = oldSI; globalThis.clearInterval = oldCI;
+    if (oldSI === undefined) { delete globalThis.setInterval; delete globalThis.clearInterval; }
+    fxAudio = oldAudio; Object.assign(FX, keep); Date.now = oldNow; Object.assign(BGM, oldBgm);
     if (had) globalThis.window = oldWin; else delete globalThis.window;
   }
 }
@@ -5820,13 +5831,13 @@ test('効果音：最初の操作（クリックなど）で音の出口を動�
     fxUnlock();
     eq(made.resume, 1, '動いたあとは何もしない');
     sfx('gem'); // 操作の瞬間でなくても鳴る（対戦中の演出の音）
-    eq(made.osc, 2);
+    eq(made.osc > 0, true);
   });
 });
 
-test('効果音：ミュート中は音の出口を作らない', () => {
+test('効果音：BGM も効果音もミュート中は音の出口を作らない', () => {
   withFakeAudio(made => {
-    FX.mute = true;
+    FX.mute = true; FX.bgmMute = true;
     fxUnlock(); sfx('tap');
     eq(made.ctx, 0);
     FX.mute = false;
@@ -5862,6 +5873,244 @@ test('効果音：全体の音量を持ち上げ、リミッターを通して�
     eq(made.limiter, 1);
     eq(fxAudio.master.to.to.dest, true, '音量 → リミッター → スピーカー');
   });
+});
+
+test('効果音：効果音だけミュートなら、効果音は鳴らさない（BGM は流せる）', () => {
+  withFakeAudio(made => {
+    FX.mute = true;
+    fxUnlock(); sfx('tap');
+    eq(made.ctx, 1, 'BGM のために音の出口は作る');
+    eq(made.osc, 0, '効果音は鳴らない');
+  });
+});
+
+test('効果音：どの音も、音の部品だけで（エラーなく）鳴らせる', () => {
+  withFakeAudio(made => {
+    fxUnlock();
+    for (const k of Object.keys(SFX)) {
+      const before = made.osc + made.noise;
+      SFX[k](); // try で包まずに呼ぶ：作りの間違いがあればここで分かる
+      eq(made.osc + made.noise - before >= 1, true, k);
+    }
+    eq(new Set(['magic', 'chaos', 'ranged', 'melee'].map(k => String(SFX[k]))).size, 4);
+    for (const k of ['melee', 'ranged', 'magic', 'chaos']) {
+      const before = made.osc + made.noise;
+      SFX[k]();
+      eq(made.osc + made.noise - before >= 3, true, `${k} は音を重ねて厚みを出す`);
+    }
+  });
+});
+
+test('効果音：同じ音は短い時間に2回まで・同時に鳴らすのは8つまで', () => {
+  withFakeAudio(made => {
+    let now = 5000; Date.now = () => now;
+    fxUnlock();
+    const count = () => made.osc + made.noise;
+    let c0 = count(), plays = 0;
+    for (let i = 0; i < 6; i++) { const b = count(); sfx('hit'); if (count() > b) plays++; }
+    eq(plays, AUDIO.SFX_SAME_MAX, '同じ音は重ねすぎない');
+    now += 1000;
+    plays = 0;
+    for (const k of ['hit', 'gem', 'tap', 'block', 'dodge', 'heal', 'death', 'melee', 'ranged', 'magic', 'chaos', 'equip']) { const b = count(); sfx(k); if (count() > b) plays++; }
+    eq(plays, AUDIO.SFX_MAX, '同時に鳴らす数の上限');
+    now += 1000;
+    const b = count(); sfx('tap');
+    eq(count() > b, true, '時間がたてば、また鳴る');
+    eq(c0 >= 0, true);
+  });
+});
+
+test('効果音：鳴っている間は BGM の音量を少し下げ、すぐ戻す', () => {
+  withFakeAudio(made => {
+    fxUnlock();
+    bgmPlay('home');
+    sfx('melee');
+    const ev = fxAudio.duck.gain.events.filter(e => e[0] === 'target').map(e => e[1]);
+    eq(ev, [AUDIO.DUCK, 1]);
+  });
+});
+
+test('BGM：どの曲も読み込めて、30秒〜1分のループで、A・B のような構成になっている', () => {
+  for (const id of Object.keys(MUSIC)) {
+    const song = MUSIC[id], plan = bgmCompile(Object.assign({ id }, song));
+    const sec = plan.steps * plan.stepSec;
+    eq(sec >= 30 && sec <= 60, true, `${id} の長さ ${sec.toFixed(1)} 秒`);
+    eq(new Set(plan.sections.map(n => song.sections[n].like || n)).size >= 2, true, `${id} は2種類以上のセクション`);
+    const kinds = new Set(Object.values(song.parts).map(p => p.kind));
+    for (const k of ['mel', 'arp', 'bass', 'drum']) eq(kinds.has(k), true, `${id} に ${k} のパート`);
+    for (const p of Object.values(song.parts)) eq(typeof INSTRUMENTS[p.inst], 'function', `${id} の楽器 ${p.inst}`);
+    for (const e of plan.events) eq(e.s >= 0 && e.s < plan.steps && e.d > 0, true, `${id} の音の位置`);
+    // 同じフレーズばかりにならない：メロディの並びがセクションごとに違う
+    const mels = new Set(plan.sections.map(n => song.sections[n].mel));
+    eq(mels.size >= 2, true, `${id} のメロディは2種類以上`);
+  }
+});
+
+test('BGM：ループの終わりは、最初の和音へ戻りたくなる和音で終わり、メロディも近い音でつながる', () => {
+  for (const id of Object.keys(MUSIC)) {
+    const plan = bgmCompile(Object.assign({ id }, MUSIC[id]));
+    const first = plan.chords[0].ch, last = plan.chords[plan.chords.length - 1].ch;
+    const up = (last.root - first.root + 12) % 12;
+    eq([7, 5, 10, 11].includes(up), true, `${id}: ${last.sym} → ${first.sym}`);
+    const mel = plan.events.filter(e => MUSIC[id].parts[e.p].kind === 'mel');
+    const gap = Math.abs(mel[mel.length - 1].m - mel[0].m);
+    eq(gap <= 9, true, `${id}: 最後の音から最初の音まで ${gap} 半音`);
+    const end = mel[mel.length - 1];
+    eq(end.s + end.d <= plan.steps, true, `${id}: 最後の音がループからはみ出さない`);
+  }
+});
+
+test('BGM：曲データの書き間違い（小節の長さが合わない・知らない和音）は読み込み時に分かる', () => {
+  const base = { bpm: 120, parts: { mel: { kind: 'mel', inst: 'flute' } }, order: ['A'] };
+  let err = '';
+  try { bgmCompile({ ...base, id: 'x', sections: { A: { chords: 'C G', mel: 'C5:16 D5:8' } } }); } catch (e) { err = e.message; }
+  eq(/長さ/.test(err), true, err);
+  err = '';
+  try { bgmCompile({ ...base, id: 'x', sections: { A: { chords: 'C Hm', mel: 'C5:32' } } }); } catch (e) { err = e.message; }
+  eq(/和音/.test(err), true, err);
+  eq(noteMidi('A4'), 69); eq(noteMidi('C#5'), 73); eq(noteMidi('Bb3'), 58);
+  eq(parseChord('D/F#').bass, 6); eq(parseChord('Am').tones, [0, 3, 7]);
+});
+
+test('BGM：最初のタップで曲が始まり、ループの終わりから最初へすき間なく続く', () => {
+  withFakeAudio(made => {
+    bgmPlay('forest');
+    eq(BGM.cur, null, 'タップの前は鳴らさない（Safari は鳴らせない）');
+    fxUnlock();
+    eq(BGM.cur && BGM.cur.id, 'forest', '最初のタップで始まる');
+    const ctx = made.last, plan = bgmPlan('forest'), loop = plan.steps * plan.stepSec;
+    const base0 = BGM.cur.base;
+    // 時間を進めながら、ループ2回分を予約させる
+    const times = [];
+    const orig = bgmNote;
+    bgmNote = (cur, ev, t) => { times.push(t); };
+    try {
+      for (let t = 0; t < loop * 2; t += 0.05) { ctx.currentTime = t; bgmTick(); }
+    } finally { bgmNote = orig; }
+    eq(BGM.cur.base, base0 + loop * 2, 'ループごとに、ちょうど1回分ずつ先へ');
+    const second = times.filter(t => t >= base0 + loop - 1e-9 && t < base0 + loop + 0.001);
+    eq(second.length > 0, true, '2回目のループの頭で、すぐ音が鳴る');
+    let maxGap = 0;
+    times.sort((x, y) => x - y).forEach((t, i) => { if (i) maxGap = Math.max(maxGap, t - times[i - 1]); });
+    eq(maxGap < 1.6, true, `音のすき間は短い（${maxGap.toFixed(2)} 秒）`);
+  });
+});
+
+test('BGM：場面が変わると、前の曲を小さくしながら次の曲を大きくする（クロスフェード）', () => {
+  withFakeAudio(made => {
+    fxUnlock();
+    bgmPlay('home');
+    const home = BGM.cur;
+    bgmPlay('home');
+    eq(BGM.cur, home, '同じ曲なら、最初からやり直さない');
+    bgmPlay('volcano');
+    eq(BGM.cur.id, 'volcano');
+    eq(BGM.fading.includes(home), true, '前の曲は小さくしている途中');
+    eq(home.out.gain.events.some(e => e[0] === 'target' && e[1] < 0.01), true, '前の曲は小さくなっていく');
+    eq(BGM.cur.out.gain.events.some(e => e[0] === 'lin' && e[1] === 1), true, '次の曲は大きくなっていく');
+    // 小さくしている間も、前の曲の音は鳴り続ける（いきなり途切れない）
+    const seen = [];
+    const orig = bgmNote;
+    bgmNote = cur => seen.push(cur.id);
+    try { made.last.currentTime += 0.5; bgmTick(); } finally { bgmNote = orig; }
+    eq(seen.includes('home') && seen.includes('volcano'), true, '両方の曲が鳴る');
+    bgmPlay('volcano'); bgmPlay(null);
+    eq(BGM.cur, null, '曲のない場面では止める');
+  });
+});
+
+test('BGM：同時に鳴らす音の数をおさえる（メロディとベースは残す）', () => {
+  withFakeAudio(made => {
+    fxUnlock();
+    bgmPlay('sky');
+    const cur = BGM.cur;
+    fxAudio.voices = new Array(AUDIO.MUSIC_VOICES).fill(99);
+    const before = made.osc;
+    const arp = bgmPlan('sky').events.find(e => MUSIC.sky.parts[e.p].kind === 'arp');
+    const mel = bgmPlan('sky').events.find(e => MUSIC.sky.parts[e.p].kind === 'mel');
+    bgmNote(cur, arp, 1, 0.1);
+    eq(made.osc, before, '上限なら伴奏は省く');
+    bgmNote(cur, mel, 1, 0.1);
+    eq(made.osc > before, true, 'メロディは鳴らす');
+  });
+});
+
+test('BGM：BGM だけミュートにすると止まり、戻すと流れる。音量は設定どおり', () => {
+  withFakeAudio(made => {
+    FX.bgm = 0.5; FX.sfx = 1;
+    fxUnlock();
+    bgmPlay('castle');
+    eq(BGM.cur.id, 'castle');
+    FX.bgmMute = true; auApplyVolumes();
+    eq(BGM.cur, null);
+    eq(fxAudio.music.gain.events.some(e => e[0] === 'target' && e[1] === 0), true, 'BGM の音量を0へ');
+    FX.bgmMute = false; auApplyVolumes();
+    eq(BGM.cur.id, 'castle');
+    eq(auMusicGain(), 0.25 * AUDIO.MUSIC_LEVEL, 'スライダー半分 → 小さめ（耳で感じる大きさに合わせる）');
+    eq(auSfxGain(), AUDIO.SFX_LEVEL);
+  });
+});
+
+test('BGM：アプリを閉じたら音を止め、戻ったら再開する。電話などで止められても戻る', () => {
+  withFakeAudio(made => {
+    const oldDoc = globalThis.document, timers = [];
+    const oldST = globalThis.setTimeout;
+    globalThis.setTimeout = (f) => { timers.push(f); return 0; };
+    globalThis.document = { hidden: false };
+    try {
+      fxUnlock();
+      bgmPlay('home');
+      document.hidden = true;
+      auPause();
+      timers.splice(0).forEach(f => f());
+      eq(made.suspend, 1, '閉じたら止める');
+      eq(fxResume(), null, '隠れている間は動かさない');
+      document.hidden = false;
+      auWake();
+      eq(made.last.state, 'running', '戻ったら動かし直す');
+      made.last.state = 'interrupted'; // 電話などで止められた（Safari）
+      auOnState();
+      timers.splice(0).forEach(f => f());
+      eq(made.last.state, 'running', '中断から戻る');
+      made.last.state = 'interrupted';
+      fxUnlock();
+      eq(made.last.state, 'running', '戻れなくても、次のタップで再開');
+    } finally { globalThis.setTimeout = oldST; globalThis.document = oldDoc; }
+  });
+});
+
+test('音の設定：音量・ミュート・消音スイッチを保存し、古い設定や変な値は初期値にする', () => {
+  const keep = { ...FX };
+  try {
+    fxApplySettings({ speed: 1, mute: false });
+    eq([FX.bgm, FX.sfx, FX.bgmMute, FX.silent], [FX_VOL_DEFAULT.bgm, FX_VOL_DEFAULT.sfx, false, 'obey'], '古い設定');
+    fxApplySettings({ bgm: 0.3, sfx: 0, bgmMute: true, mute: true, silent: 'play' });
+    eq([FX.bgm, FX.sfx, FX.bgmMute, FX.mute, FX.silent], [0.3, 0, true, true, 'play']);
+    fxApplySettings(JSON.parse(JSON.stringify(FX)));
+    eq([FX.bgm, FX.sfx, FX.bgmMute, FX.silent], [0.3, 0, true, 'play'], '保存して読み直しても同じ');
+    fxApplySettings({ bgm: 7, sfx: 'abc', silent: 'x' });
+    eq([FX.bgm, FX.sfx, FX.silent], [1, FX_VOL_DEFAULT.sfx, 'obey']);
+  } finally { Object.assign(FX, keep); }
+});
+
+test('音の設定：iPhone の消音スイッチ（audioSession がある端末だけ選べる）', () => {
+  const oldNav = globalThis.navigator, keep = FX.silent;
+  try {
+    globalThis.navigator = {};
+    eq(auSessionSupported(), false);
+    auApplySession(); // ない端末でもエラーにならない
+    globalThis.navigator = { audioSession: { type: 'auto' } };
+    eq(auSessionSupported(), true);
+    FX.silent = 'obey'; auApplySession();
+    eq(navigator.audioSession.type, 'ambient', 'スイッチに従う');
+    FX.silent = 'play'; auApplySession();
+    eq(navigator.audioSession.type, 'playback', 'スイッチがオンでも鳴らす');
+  } finally { FX.silent = keep; if (oldNav === undefined) delete globalThis.navigator; else globalThis.navigator = oldNav; }
+});
+
+test('BGM：どの地形でも曲が決まり、対戦以外の画面はホームの曲', () => {
+  for (const t of TERRAINS) eq(!!MUSIC[BGM_OF_SCENE[t.scene]] || BGM_OF_SCENE[t.scene] === 'lake', true, t.id);
+  eq(bgmForScene(), 'home');
 });
 
 test('パック演出：パックの光り方は、中身でいちばん高いレアリティで決まる', () => {

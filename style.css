@@ -1775,3 +1775,20 @@ h1 { font-size: 36px; letter-spacing: 1px; }
 .deck-grid.resorted > .card:nth-child(3n + 2) { animation-delay: 0.07s; }
 /* 透明にはしない（アニメーションが止まる環境でも、カードが必ず見えるように） */
 @keyframes ct-shuffle { from { transform: translateY(12px) scale(0.92); } to { transform: none; } }
+
+/* ---------- 音量のスライダー・試聴 ---------- */
+.vol-row { display: flex; align-items: center; gap: 8px; width: 100%; margin: 4px 0; }
+.vol-row .vol-mute { flex: none; width: 40px; height: 40px; }
+.vol-row .vol-name { flex: none; width: 4.2em; text-align: left; font-size: 14px; }
+.vol-row input[type=range] { flex: 1; min-width: 0; height: 40px; accent-color: var(--accent); }
+.vol-row .vol-num { flex: none; width: 2.4em; text-align: right; font-size: 13px; color: #cbd5e1; font-variant-numeric: tabular-nums; }
+.vol-row.muted input[type=range] { opacity: 0.4; }
+.vol-row.muted .vol-num { color: #f87171; }
+.mr-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: 100%; }
+.mr-grid.sfx { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mr-grid .btn { margin: 0; min-height: 44px; padding: 6px 4px; font-size: 14px; }
+.mr-grid.sfx .btn { min-height: 40px; font-size: 12px; }
+.mr-grid .btn.on { border-color: var(--accent); color: var(--accent); }
+.result.settings { gap: 8px; padding: 18px 16px; max-height: 92dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.result.settings h2 { font-size: 24px; }
+.result.settings > p:not(.settings-note) { align-self: flex-start; font-size: 13px; margin-top: 4px; }

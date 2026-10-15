@@ -96,7 +96,7 @@ function showMore() {
     <button class="btn" data-act="more-rules">📘 あそびかた</button>
     <button class="btn" data-act="more-guide">📖 攻略本を開く</button>
     <button class="btn" data-act="more-stages">🗺️ ステージ一覧</button>
-    <button class="btn" data-act="more-settings">⚙ 設定（演出の速さ・オートの強さ・効果音）</button>
+    <button class="btn" data-act="more-settings">⚙ 設定（演出の速さ・オートの強さ・音量）</button>
     <button class="btn danger" data-act="more-reset">データリセット</button>
     <button class="btn primary" data-act="close-detail">とじる</button>
   </div>`);
@@ -669,7 +669,19 @@ function showHeroes(id) {
 // ---------- 設定（演出の速さ・効果音） ----------
 
 function renderMuteButton() {
-  $('#btn-mute').innerHTML = FX.mute ? ICON.muted : ICON.sound;
+  $('#btn-mute').innerHTML = FX.mute && FX.bgmMute ? ICON.muted : ICON.sound;
+}
+
+// 音量のスライダー1本（BGM・効果音）。左のボタンでミュート
+function volumeRowHtml(key, label) {
+  const muted = key === 'bgm' ? FX.bgmMute : FX.mute;
+  const v = Math.round(FX[key] * 100);
+  return `<div class="vol-row${muted ? ' muted' : ''}">
+    <button class="btn small icon vol-mute" data-act="vol-mute" data-vol="${key}" aria-label="${label}を${muted ? 'オンにする' : '消す'}">${muted ? ICON.muted : ICON.sound}</button>
+    <span class="vol-name">${label}</span>
+    <input type="range" min="0" max="100" step="5" value="${v}" data-vol="${key}" aria-label="${label}の音量">
+    <span class="vol-num" data-vol-num="${key}">${muted ? 'オフ' : v}</span>
+  </div>`;
 }
 
 function showSettings() {
@@ -677,26 +689,87 @@ function showSettings() {
     `<button class="btn${FX.speed === v ? ' on' : ''}" data-act="speed" data-speed="${v}">${label}</button>`).join('');
   const levels = FX_AUTO_LEVELS.map(([v, label]) =>
     `<button class="btn${FX.autoLevel === v ? ' on' : ''}" data-act="auto-level" data-level="${v}">${label}</button>`).join('');
-  showOverlay(`<div class="result">
+  const can = auSessionSupported();
+  const silent = [['obey', 'スイッチに従う'], ['play', 'オンでも鳴らす']].map(([v, label]) =>
+    `<button class="btn${FX.silent === v ? ' on' : ''}" data-act="silent" data-silent="${v}"${can ? '' : ' disabled'}>${label}</button>`).join('');
+  showOverlay(`<div class="result settings">
     <h2>設定</h2>
     <p>演出の速さ</p>
     <div class="tabs settings-row">${speeds}</div>
     <p>オートバトルの強さ</p>
     <div class="tabs settings-row">${levels}</div>
     <p class="settings-note">${FX.autoLevel === 'strong' ? 'つよい：先読みして、一番よい手を選ぶ。理由が対戦ログに残る' : 'ふつう：相手のCPUと同じ考え方'}</p>
-    <p>効果音</p>
-    <button class="btn big" data-act="mute">${FX.mute ? `${ICON.muted} オフ（押すとオンにする）` : `${ICON.sound} オン（押すとオフにする）`}</button>
-    <button class="btn big" data-act="sound-test"${FX.mute ? ' disabled' : ''}>${ICON.sound} 音を鳴らしてみる</button>
+    <p>音量</p>
+    ${volumeRowHtml('bgm', 'BGM')}
+    ${volumeRowHtml('sfx', '効果音')}
+    <p>iPhone の消音スイッチ（マナーモード）</p>
+    <div class="tabs settings-row">${silent}</div>
+    <p class="settings-note">${can
+      ? (FX.silent === 'play' ? '消音スイッチがオンでも、BGM と効果音を鳴らします' : '消音スイッチがオンのときは鳴らしません')
+      : 'この端末のブラウザでは選べません（iOS 17 以降の Safari で選べます）。消音スイッチがオンのときの動きは端末に従います'}</p>
+    <button class="btn big" data-act="music-room">🎵 曲と効果音を試聴する</button>
     <button class="btn big" data-act="more-guide">📖 攻略本を開く</button>
     <button class="btn big primary" data-act="close-detail">とじる</button>
   </div>`);
 }
 
+// 対戦画面のスピーカーのボタン：BGM と効果音をまとめて消す・まとめて戻す
 function toggleMute() {
-  FX.mute = !FX.mute;
+  const off = !(FX.mute && FX.bgmMute);
+  FX.mute = off; FX.bgmMute = off;
   fxSaveSettings();
   renderMuteButton();
   sfx('tap');
+}
+
+// スライダーを動かしている最中：音量をすぐ変える（保存は手を離したとき）
+function settingsVolume(el, save) {
+  const key = el.dataset.vol;
+  FX[key] = Math.max(0, Math.min(1, Number(el.value) / 100));
+  if (key === 'bgm') FX.bgmMute = false; else FX.mute = false;
+  const row = el.closest && el.closest('.vol-row');
+  if (row) {
+    row.classList.remove('muted');
+    const num = row.querySelector('[data-vol-num]');
+    if (num) num.textContent = Math.round(FX[key] * 100);
+    const btn = row.querySelector('.vol-mute');
+    if (btn) btn.innerHTML = ICON.sound;
+  }
+  if (save) { fxSaveSettings(); renderMuteButton(); if (key === 'sfx') sfx('gem'); }
+  else auApplyVolumes();
+}
+
+// ---------- 試聴（曲と効果音をまとめて聞く） ----------
+
+const SFX_LIST = [
+  ['melee', '近接攻撃'], ['ranged', '遠隔攻撃'], ['magic', '魔法攻撃'], ['chaos', 'カオス攻撃'], ['hit', 'ダメージ'],
+  ['break', 'アーマー破壊'], ['block', 'ブロック'], ['dodge', '回避'], ['heal', '回復'], ['death', '撃破'],
+  ['sacrifice', '生贄'], ['gem', 'クリスタル'], ['summon', 'カードを出す'], ['equip', '装備'], ['tap', 'ボタン'],
+  ['turn', 'ターン開始'], ['win', '勝利'], ['lose', '敗北'],
+];
+
+function showMusicRoom() {
+  const playing = BGM.preview;
+  const songs = MUSIC_LIST.filter(([id]) => MUSIC[id]).map(([id, label]) =>
+    `<button class="btn mr-song${playing === id ? ' on' : ''}" data-act="mr-song" data-song="${id}">${playing === id ? '■' : '▶'} ${label}</button>`).join('');
+  const sounds = SFX_LIST.map(([id, label]) => `<button class="btn small mr-sfx" data-act="mr-sfx" data-sfx="${id}">${label}</button>`).join('');
+  showOverlay(`<div class="result settings music-room">
+    <h2>🎵 試聴</h2>
+    ${volumeRowHtml('bgm', 'BGM')}
+    ${volumeRowHtml('sfx', '効果音')}
+    <p>曲（もう一度押すと止まる）</p>
+    <div class="mr-grid">${songs}</div>
+    <p>効果音</p>
+    <div class="mr-grid sfx">${sounds}</div>
+    <p class="settings-note">${FX.bgmMute ? 'BGM がオフになっています。左のボタンでオンにすると聞けます' : '曲はループします。画面を閉じると、もとの曲に戻ります'}</p>
+    <button class="btn big primary" data-act="mr-close">設定にもどる</button>
+  </div>`);
+}
+
+function musicRoomClose() {
+  BGM.preview = null;
+  bgmSync();
+  showSettings();
 }
 
 // ---------- 操作 ----------
@@ -763,10 +836,14 @@ function openPackTab() {
   tabOver = 'btn-pack'; renderTabs();
 }
 
+// 音量のスライダー（設定・試聴）
+$('#overlay').addEventListener('input', e => { if (e.target.dataset && e.target.dataset.vol && e.target.type === 'range') settingsVolume(e.target, false); });
+$('#overlay').addEventListener('change', e => { if (e.target.dataset && e.target.dataset.vol && e.target.type === 'range') settingsVolume(e.target, true); });
+
 $('#overlay').addEventListener('click', e => {
   const act = e.target.closest && e.target.closest('[data-act]');
   const name = act && act.dataset.act;
-  if (name === 'close-detail') { detailId = null; hideOverlay(); }
+  if (name === 'close-detail') { detailId = null; hideOverlay(); if (BGM.preview) { BGM.preview = null; bgmSync(); } }
   if (name === 'more-rules') showRules();
   if (name === 'more-guide') openGuide();
   if (name === 'more-stages') openStages();
@@ -794,8 +871,17 @@ $('#overlay').addEventListener('click', e => {
     renderAuto(); // 対戦画面の速度ボタンの表示も合わせる
   }
   if (name === 'mute') { toggleMute(); showSettings(); }
+  if (name === 'vol-mute') {
+    if (act.dataset.vol === 'bgm') FX.bgmMute = !FX.bgmMute; else FX.mute = !FX.mute;
+    fxSaveSettings(); renderMuteButton(); sfx('tap');
+    if ($('#overlay').querySelector('.music-room')) showMusicRoom(); else showSettings();
+  }
+  if (name === 'silent') { FX.silent = act.dataset.silent === 'play' ? 'play' : 'obey'; fxSaveSettings(); auApplySession(); showSettings(); }
+  if (name === 'music-room') showMusicRoom();
+  if (name === 'mr-song') { BGM.preview = BGM.preview === act.dataset.song ? null : act.dataset.song; fxUnlock(); bgmSync(); showMusicRoom(); }
+  if (name === 'mr-sfx') sfx(act.dataset.sfx);
+  if (name === 'mr-close') musicRoomClose();
   if (name === 'auto-level') { FX.autoLevel = act.dataset.level === 'normal' ? 'normal' : 'strong'; fxSaveSettings(); showSettings(); }
-  if (name === 'sound-test') sfx('win');
   if (name === 'stage-go' && stageUnlocked(profile, act.dataset.stage)) {
     beginBattle({ type: 'stage', stage: STAGE_BY_ID[act.dataset.stage] }); // 使用中のデッキで、すぐ対戦へ（deckui.js）
   }
@@ -838,6 +924,7 @@ $('#overlay').addEventListener('click', e => {
 function bootTitle() {
   renderTitle();
   renderMuteButton();
+  bgmRefresh(); // ホームの曲（最初のタップで鳴り始める）
   // 日付が変わっていればクエストを更新し、ログインボーナスを渡す
   checkDaily();
 }

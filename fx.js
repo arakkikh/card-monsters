@@ -1,12 +1,15 @@
 // ============================================================
 // 演出（エフェクト）と効果音
 //   演出は #fx の上に小さな要素を出して動かす。同時に動かす数は少なく抑えている。
-//   効果音は Web Audio API でその場で合成する（外部ファイルなし）。
-//   設定：演出速度（1倍・2倍・スキップ）・ミュート・オートバトル・オートの強さ。localStorage に保存する。
+//   音（BGM・効果音）は audio.js。
+//   設定：演出速度（1倍・2倍・スキップ）・オートバトル・オートの強さ・音量（BGM・効果音）とミュート・消音スイッチ。localStorage に保存する。
 // ============================================================
 
 const FX_KEY = 'card-monsters-settings';
-const FX = { speed: 1, mute: false, auto: false, autoLevel: 'strong' }; // speed: 1 | 2 | 'skip'　auto: オートバトル（自分の番も自動で進める）　autoLevel: オートの強さ（'normal' ふつう | 'strong' つよい）
+const FX = { speed: 1, mute: false, auto: false, autoLevel: 'strong', bgm: 0.6, sfx: 0.8, bgmMute: false, silent: 'obey' };
+// speed: 1 | 2 | 'skip'　auto: オートバトル（自分の番も自動で進める）　autoLevel: オートの強さ（'normal' ふつう | 'strong' つよい）
+// bgm・sfx: 音量（0〜1）　mute: 効果音を消す　bgmMute: BGM を消す　silent: iPhone の消音スイッチ（'obey' 従う | 'play' オンでも鳴らす）
+const FX_VOL_DEFAULT = { bgm: 0.6, sfx: 0.8 };
 const FX_AUTO_LEVELS = [['normal', 'ふつう'], ['strong', 'つよい']];
 const FX_SPEEDS = [[1, '1倍'], [2, '2倍'], ['skip', 'スキップ']];
 
@@ -17,6 +20,12 @@ function fxApplySettings(s) {
   FX.mute = !!s.mute;
   FX.auto = !!s.auto;
   FX.autoLevel = s.autoLevel === 'normal' ? 'normal' : 'strong'; // 保存がなければ「つよい」
+  for (const k of ['bgm', 'sfx']) {
+    const v = Number(s[k]);
+    FX[k] = s[k] != null && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : FX_VOL_DEFAULT[k];
+  }
+  FX.bgmMute = !!s.bgmMute;
+  FX.silent = s.silent === 'play' ? 'play' : 'obey'; // 保存がなければ、消音スイッチに従う
 }
 
 function fxLoadSettings() {
@@ -27,6 +36,7 @@ function fxLoadSettings() {
 function fxSaveSettings() {
   try { localStorage.setItem(FX_KEY, JSON.stringify(FX)); } catch (e) { /* 保存できなくても動く */ }
   fxApplySpeed();
+  if (typeof auApplyVolumes === 'function') auApplyVolumes();
 }
 
 // CSS のアニメーションにも速度を伝える（--spd で割る）
@@ -467,143 +477,6 @@ function fxSpinNumber(el, finalText) {
   }, Math.max(20, fxMs(55)));
 }
 
-// ---------- 効果音（Web Audio API で合成） ----------
-
-let fxAudio = null;
-const FX_VOLUME = 1.8;   // 全体の音量。合成した音は小さめなので持ち上げ、下のリミッターで割れを防ぐ
-const FX_LATE_MS = 250;  // 音の準備がこれより遅れたら、その音は鳴らさない（後からまとめて鳴るのを防ぐ）
-
-// 音の出口（音量 → リミッター → スピーカー）を作って、音量のノードを返す
-function fxAudioChain(ctx) {
-  const master = ctx.createGain();
-  master.gain.value = FX_VOLUME;
-  let out = master;
-  if (ctx.createDynamicsCompressor) {
-    const lim = ctx.createDynamicsCompressor();
-    lim.threshold.value = -8; lim.knee.value = 6; lim.ratio.value = 12;
-    lim.attack.value = 0.002; lim.release.value = 0.12;
-    master.connect(lim);
-    out = lim;
-  }
-  out.connect(ctx.destination);
-  return master;
-}
-
-function fxAudioCtx() {
-  if (FX.mute || typeof window === 'undefined') return null;
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return null;
-  if (!fxAudio) {
-    const ctx = new AC();
-    fxAudio = { ctx, master: fxAudioChain(ctx) };
-  }
-  return fxAudio;
-}
-
-// 止まっている音の出口を動かす。動いていれば null、そうでなければ Promise を返す
-function fxResume() {
-  const ctx = fxAudio && fxAudio.ctx;
-  if (!ctx || ctx.state === 'running') return null;
-  try {
-    const p = ctx.resume();
-    return p && p.then ? p : null;
-  } catch (e) { return null; }
-}
-
-// ブラウザ（特に Safari）は、クリックやキー操作の「その瞬間」に始めた音しか鳴らさない。
-// 対戦中の音は演出の途中（操作の瞬間ではない）で鳴るので、最初の操作で音の出口を用意して動かしておく
-function fxUnlock() {
-  const a = fxAudioCtx();
-  if (!a || a.ctx.state === 'running') return;
-  const p = fxResume();
-  if (p) p.catch(() => {});
-  try { // 無音を一瞬鳴らす（古い Safari はこれで音が出るようになる）
-    const src = a.ctx.createBufferSource();
-    src.buffer = a.ctx.createBuffer(1, 1, a.ctx.sampleRate);
-    src.connect(a.ctx.destination);
-    src.start(0);
-  } catch (e) { /* 鳴らせなくても続ける */ }
-}
-
-if (typeof document !== 'undefined' && document.addEventListener) {
-  for (const ev of ['pointerdown', 'mousedown', 'touchend', 'keydown', 'click']) document.addEventListener(ev, fxUnlock, true);
-  // 別のタブやアプリから戻ったとき、止められた音を動かし直す
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { const p = fxResume(); if (p) p.catch(() => {}); } });
-}
-
-// 音程のある音。slide は終わりの周波数との差
-function fxTone(freq, dur, { type = 'sine', vol = 0.2, slide = 0, delay = 0 } = {}) {
-  const a = fxAudio, t = a.ctx.currentTime + delay;
-  const o = a.ctx.createOscillator(), g = a.ctx.createGain();
-  o.type = type;
-  o.frequency.setValueAtTime(freq, t);
-  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(vol, t + 0.012);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(a.master);
-  o.start(t);
-  o.stop(t + dur + 0.02);
-}
-
-// ノイズ（風切り・打撃・破片など）。フィルターの周波数を動かして表情を付ける
-function fxNoise(dur, { vol = 0.25, freq = 1200, slide = 0, q = 1, type = 'bandpass', delay = 0 } = {}) {
-  const a = fxAudio, t = a.ctx.currentTime + delay;
-  const len = Math.max(1, Math.floor(a.ctx.sampleRate * dur));
-  const buf = a.ctx.createBuffer(1, len, a.ctx.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-  const src = a.ctx.createBufferSource(), f = a.ctx.createBiquadFilter(), g = a.ctx.createGain();
-  src.buffer = buf;
-  f.type = type; f.Q.value = q;
-  f.frequency.setValueAtTime(freq, t);
-  if (slide) f.frequency.exponentialRampToValueAtTime(Math.max(60, freq + slide), t + dur);
-  g.gain.setValueAtTime(vol, t);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(f).connect(g).connect(a.master);
-  src.start(t);
-}
-
-// 音の一覧。攻撃の種類ごとに、はっきり違う音にしている
-const SFX = {
-  melee:  () => { fxNoise(0.14, { freq: 2400, slide: -1900, vol: 0.3 }); fxTone(120, 0.2, { type: 'triangle', vol: 0.35, slide: -70, delay: 0.1 }); },
-  ranged: () => { fxTone(520, 0.07, { type: 'triangle', vol: 0.2, slide: 260 }); fxNoise(0.26, { freq: 3200, slide: -2200, q: 4, vol: 0.18, delay: 0.04 }); fxTone(180, 0.08, { type: 'square', vol: 0.12, delay: 0.36 }); },
-  magic:  () => { [523, 659, 784, 1047].forEach((f, i) => fxTone(f, 0.16, { vol: 0.14, delay: i * 0.06 })); fxTone(1568, 0.3, { vol: 0.1, delay: 0.5, slide: -600 }); },
-  chaos:  () => { fxTone(90, 0.34, { type: 'sawtooth', vol: 0.16, slide: 160 }); fxTone(97, 0.34, { type: 'sawtooth', vol: 0.16, slide: 120 }); fxNoise(0.3, { freq: 500, slide: 2400, vol: 0.3, delay: 0.3, type: 'lowpass' }); },
-  hit:    () => { fxNoise(0.08, { freq: 700, vol: 0.5 }); fxTone(160, 0.08, { type: 'triangle', vol: 0.2, slide: -80 }); },
-  block:  () => { fxTone(1400, 0.1, { type: 'square', vol: 0.12 }); fxTone(2100, 0.16, { type: 'triangle', vol: 0.12, delay: 0.02 }); },
-  break:  () => { fxNoise(0.22, { freq: 3800, slide: -1500, q: 2, vol: 0.3 }); fxTone(900, 0.12, { type: 'square', vol: 0.1, slide: -500 }); },
-  dodge:  () => { fxNoise(0.2, { freq: 600, slide: 2600, q: 3, vol: 0.5 }); fxTone(500, 0.16, { vol: 0.08, slide: 700 }); },
-  thorns: () => { fxTone(880, 0.06, { type: 'square', vol: 0.12 }); fxTone(660, 0.1, { type: 'square', vol: 0.12, delay: 0.05 }); },
-  heal:   () => { [660, 880, 1320].forEach((f, i) => fxTone(f, 0.22, { vol: 0.12, delay: i * 0.08 })); },
-  buff:   () => { [392, 494, 587].forEach(f => fxTone(f, 0.3, { type: 'triangle', vol: 0.1 })); },
-  debuff: () => { fxTone(300, 0.3, { type: 'sawtooth', vol: 0.1, slide: -160 }); },
-  disease: () => { [300, 420, 360].forEach((f, i) => fxTone(f, 0.07, { vol: 0.14, slide: 200, delay: i * 0.07 })); },
-  outbreak: () => { fxNoise(0.2, { freq: 400, slide: 1600, vol: 0.28, type: 'lowpass' }); fxTone(200, 0.2, { type: 'sawtooth', vol: 0.14, slide: -120 }); },
-  entangle: () => { fxTone(140, 0.3, { type: 'sawtooth', vol: 0.12, slide: 120 }); fxNoise(0.25, { freq: 900, q: 6, vol: 0.1 }); },
-  silence: () => { fxTone(220, 0.25, { vol: 0.16, slide: -140 }); },
-  death:  () => { fxTone(440, 0.4, { type: 'triangle', vol: 0.16, slide: -330 }); fxNoise(0.3, { freq: 2000, slide: -1500, vol: 0.12 }); },
-  burn:   () => { fxNoise(0.7, { freq: 500, slide: 900, vol: 0.25, type: 'lowpass' }); fxTone(70, 0.6, { type: 'sawtooth', vol: 0.14 }); },
-  sacrifice: () => { fxNoise(0.4, { freq: 700, slide: 2400, vol: 0.4, type: 'lowpass' }); },
-  gem:    () => { fxTone(1320, 0.08, { vol: 0.14 }); fxTone(1760, 0.14, { vol: 0.14, delay: 0.07 }); },
-  summon: () => { fxTone(196, 0.14, { type: 'triangle', vol: 0.2 }); fxTone(294, 0.2, { type: 'triangle', vol: 0.16, delay: 0.06 }); },
-  equip:  () => { fxTone(700, 0.05, { type: 'square', vol: 0.1 }); fxTone(1050, 0.1, { type: 'square', vol: 0.1, delay: 0.05 }); },
-  flash:  () => { fxNoise(0.18, { freq: 1500, slide: 2500, vol: 0.14 }); fxTone(880, 0.2, { vol: 0.12, slide: 400 }); },
-  turn:   () => { fxTone(330, 0.3, { type: 'triangle', vol: 0.14 }); fxTone(440, 0.4, { type: 'triangle', vol: 0.12, delay: 0.1 }); },
-  tap:    () => { fxTone(900, 0.05, { type: 'triangle', vol: 0.12 }); },
-  win:    () => { [523, 659, 784, 1047, 1319].forEach((f, i) => fxTone(f, 0.3, { type: 'triangle', vol: 0.16, delay: i * 0.11 })); },
-  lose:   () => { [392, 330, 262, 196].forEach((f, i) => fxTone(f, 0.36, { type: 'triangle', vol: 0.16, delay: i * 0.16 })); },
-};
-
-function sfx(name) {
-  const a = SFX[name] ? fxAudioCtx() : null;
-  if (!a) return;
-  const play = () => { try { SFX[name](); } catch (e) { /* 音が出せない環境では黙って続ける */ } };
-  if (a.ctx.state === 'running') { play(); return; }
-  // まだ音の出口が動いていない：動かしてから鳴らす。遅れすぎた音は捨てる
-  const at = Date.now();
-  const p = fxResume();
-  if (p) p.then(() => { if (a.ctx.state === 'running' && Date.now() - at < FX_LATE_MS) play(); }, () => {});
-}
+// 効果音と BGM は audio.js（曲のデータは music.js）
 
 fxLoadSettings();
