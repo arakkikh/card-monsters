@@ -321,13 +321,25 @@ function startTurn(state) {
 
 // カード + 装備から攻撃一覧 [{type, atk, source}] を作る（先頭が本体の攻撃）。
 // 装備の攻撃力は、本体と同じタイプなら本体に加算、違うタイプなら別の攻撃として追加する。
+//   本体が2種類の攻撃を持つときは、2つとも source: 'base'。base: 本体の攻撃力（装備のぶんを含まない）
+//   装備：同じ種類なら、その攻撃に加算。違う種類なら攻撃が増える（合わせて MAX_ATTACK_TYPES 種類まで）
 function attacksFor(card, item) {
-  const list = [{ type: card.type, atk: card.atk, source: 'base' }];
-  for (const type in (item && item.atk) || {}) {
-    if (type === card.type) list[0].atk += item.atk[type];
-    else list.push({ type, atk: item.atk[type], source: 'weapon' });
+  const list = baseAttacksOf(card).map(b => ({ type: b.type, atk: b.atk, base: b.atk, source: 'base' }));
+  const add = (item && item.atk) || {};
+  // 装備で増える攻撃は、攻撃の順番（魔法 → カオス → 遠隔 → 近接）で足していく（上限を超えたぶんは使えない）
+  for (const type of ATTACK_ORDER.filter(t => add[t])) {
+    const same = list.find(a => a.type === type);
+    if (same) same.atk += add[type];
+    else if (list.length < MAX_ATTACK_TYPES) list.push({ type, atk: add[type], base: 0, source: 'weapon' });
   }
   return list;
+}
+
+// 装備の攻撃のうち、種類の上限（MAX_ATTACK_TYPES）を超えて使えないもの [{ type, atk }]（表示用）
+function cappedWeaponAttacks(card, item) {
+  if (!item || !item.atk) return [];
+  const used = attacksFor(card, item).map(a => a.type);
+  return ATTACK_ORDER.filter(t => item.atk[t] && !used.includes(t)).map(t => ({ type: t, atk: item.atk[t] }));
 }
 
 // 場に出たモンスター。
@@ -412,7 +424,7 @@ function hasSkill(mon, id) { return skillX(mon, id) > 0; }
 // base は本体の素の攻撃力、mods は変化の内訳 [{label, x}]（装備・Swallow・強化・弱体）
 function getAttacks(mon) {
   return attacksFor(mon.card, mon.item).map(a => {
-    const base = a.source === 'base' ? mon.card.atk : 0;
+    const base = a.base;
     const mods = [];
     const add = (label, x) => { if (x) mods.push({ label, x }); };
     add(mon.item ? mon.item.name : '', a.atk - base);
@@ -569,7 +581,7 @@ function playMonster(state, pi, uid, slot) {
   p.slots.length = 3;
   const events = onEnter(state, pi, mon, h.card);
   // ヒーロースキル「蝕む刃」：近接・カオスの味方は、出したときに Disease 1（スキル）を得る
-  if (heroIs(p, 'venomblade') && (h.card.type === 'melee' || h.card.type === 'chaos')) {
+  if (heroIs(p, 'venomblade') && attackTypesOf(h.card).some(t => t === 'melee' || t === 'chaos')) {
     mon.perm = { disease: 1 };
     events.push({ kind: 'hero', id: 'venomblade', effect: 'grant', target: mon, targets: [mon] });
   }
@@ -1803,12 +1815,13 @@ function foeTraits(foe) {
 // 相手の場に刺さるカードほど高い値（Flying には Anti-Air、魔法や回復には Silence など）
 function counterBonus(card, t) {
   const has = id => (card.skills || []).some(k => k.id === id);
+  const types = attackTypesOf(card);
   let bonus = 0;
-  if (t.flying) bonus += has('antiair') ? 3 : (card.type === 'magic' || card.type === 'chaos' || has('flying')) ? 1 : 0;
+  if (t.flying) bonus += has('antiair') ? 3 : (types.includes('magic') || types.includes('chaos') || has('flying')) ? 1 : 0;
   if (t.caster) bonus += has('silence') ? 3 : has('suppress') ? 1 : 0;
   if (t.melee && (has('thorns') || has('demoralize'))) bonus += 1.5;
-  if (t.armor && (card.type === 'magic' || has('piercing'))) bonus += 1;
-  if (t.reflect && card.type === 'magic') bonus -= 2;            // Magic Reflect 持ちには魔法を避ける
+  if (t.armor && (types.includes('magic') || has('piercing'))) bonus += 1;
+  if (t.reflect && types[0] === 'magic') bonus -= 2;             // Magic Reflect 持ちには魔法を避ける（魔法が主な攻撃のとき）
   // Fear（位置を入れ替える）と Menace（位置が変わった敵にダメージ）は組み合わせる
   const mine = id => (t.own || []).some(c => (c.skills || []).some(k => k.id === id));
   if ((has('menace') && mine('fear')) || (has('fear') && mine('menace'))) bonus += 2.5;
@@ -2002,12 +2015,12 @@ function cpuNextAction(state, opts = {}) {
   const traits = foeTraits(state.players[1 - state.current]);
   traits.own = [...p.slots.filter(m => m).map(m => m.card), ...p.hand.map(h => h.card)]; // 自分の場と手札（組み合わせの判断用）
   // 出す優先度：コストの高い順。相手の場に刺さるスキル（Flying に Anti-Air など）を持つカードは優先
-  const power = h => (rush ? h.card.atk * 10 : 0) + h.card.cost + counterBonus(h.card, traits);
+  const power = h => (rush ? baseAttacksOf(h.card).reduce((n, a) => n + a.atk, 0) * 10 : 0) + h.card.cost + counterBonus(h.card, traits);
 
   // 1. モンスターを出す（スロット1が空なら、そこで攻撃できるタイプを優先。あとはコストの高い順）
   if (p.slots.some(s => !s)) {
     const frontEmpty = !p.slots[0];
-    const front = h => (SLOT_TYPES[0].includes(h.card.type) ? 1 : 0);
+    const front = h => (attackTypesOf(h.card).some(t => SLOT_TYPES[0].includes(t)) ? 1 : 0); // どれか1つでも前列で使えれば
     const playable = p.hand
       .filter(h => h.card.kind === 'monster' && affordable(h))
       .sort((a, b) => (frontEmpty && front(b) - front(a)) || power(b) - power(a));

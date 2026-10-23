@@ -366,12 +366,15 @@ test('装備の攻撃：同じタイプなら本体の攻撃力に加算され�
   eq(attacks(s).map(e => [e.type, e.source, e.dmg]), [['magic', 'base', 5]]);
 });
 
-test('装備の攻撃：全装備×全モンスターで、装備の攻撃タイプが必ず攻撃一覧に入る', () => {
+test('装備の攻撃：全装備×全モンスターで、装備の攻撃タイプが必ず攻撃一覧に入る（種類の上限を超えたぶんだけは入らない）', () => {
   for (const item of EQUIPS) for (const m of MONSTERS) {
     if (item.color && item.color !== m.color) continue;
     const list = getAttacks(mk(m.id, item.id));
+    const capped = cappedWeaponAttacks(m, item).map(x => x.type);
+    assert(list.length <= MAX_ATTACK_TYPES, `${m.name} + ${item.name}：種類は${MAX_ATTACK_TYPES}つまで`);
     for (const type in (item.atk || {})) {
       const a = list.find(x => x.type === type);
+      if (capped.includes(type)) { assert(!a && list.length === MAX_ATTACK_TYPES, `${m.name} + ${item.name}：上限で使えない ${type}`); continue; }
       assert(a && a.atk >= item.atk[type], `${m.name} + ${item.name}：${type}`);
     }
   }
@@ -411,10 +414,156 @@ test('攻撃の順番：遠隔モンスターに近接装備（Reachあり）→
   eq(order(attacks(s).filter(e => e.attacker.card.id === ELF)), [['ranged', 'base'], ['melee', 'weapon']]);
 });
 
-test('攻撃の順番：4種類すべてを持っていても 魔法 → カオス → 遠隔 → 近接', () => {
+test('攻撃の順番：3種類を持っていても 魔法 → カオス → 遠隔 → 近接。種類は本体と装備を合わせて3つまで', () => {
+  const two = tequip('t_two', 3, null, { atk: { melee: 1, chaos: 1 } }, ['reach']);
+  const s = board([mk(WOLF), mk(MAGE, two)], [mk(GOLEM)]);
+  eq(attacks(s).filter(e => e.attacker.card.id === MAGE).map(e => e.type), ['magic', 'chaos', 'melee']);
+  // 1種類のモンスターに3種類を足す装備：上限の3種類まで（攻撃の順番で足していき、超えたぶんは使えない）
   const all = tequip('t_all', 3, null, { atk: { melee: 1, ranged: 1, chaos: 1 } }, ['reach']);
-  const s = board([mk(WOLF), mk(MAGE, all)], [mk(GOLEM)]);
-  eq(attacks(s).filter(e => e.attacker.card.id === MAGE).map(e => e.type), ['magic', 'chaos', 'ranged', 'melee']);
+  const s2 = board([mk(WOLF), mk(MAGE, all)], [mk(GOLEM)]);
+  eq(MAX_ATTACK_TYPES, 3);
+  eq(attacks(s2).filter(e => e.attacker.card.id === MAGE).map(e => e.type), ['magic', 'chaos', 'ranged']);
+  eq(cappedWeaponAttacks(CARD_BY_ID[MAGE], CARD_BY_ID[all]), [{ type: 'melee', atk: 1 }], '上限を超えた攻撃（表示用）');
+  eq(cappedWeaponAttacks(CARD_BY_ID[MAGE], CARD_BY_ID[two]), []);
+});
+
+// ---------- 2種類の攻撃を持つモンスター ----------
+// テスト用：D('melee', 2, 'magic', 1, 10, 'batter:1')
+const D = (type, atk, type2, atk2, hp, ...skills) => tcard({ ...CARD_BY_ID[S(type, atk, hp, ...skills)], type2, atk2 });
+const TYPES4 = ['melee', 'ranged', 'magic', 'chaos'];
+
+test('2種類の攻撃：全6通りの組み合わせ × 3スロットで、攻撃順は 魔法 → カオス → 遠隔 → 近接、使えない攻撃はとばす', () => {
+  const pairs = [];
+  TYPES4.forEach((a, i) => TYPES4.slice(i + 1).forEach(b => pairs.push([a, b])));
+  eq(pairs.length, 6);
+  for (const [a, b] of pairs) for (const [t1, t2] of [[a, b], [b, a]]) {
+    const id = D(t1, 2, t2, 1, 10);
+    for (let slot = 0; slot < 3; slot++) {
+      const m = mk(id);
+      const want = ATTACK_ORDER.filter(t => (t === t1 || t === t2) && SLOT_TYPES[slot].includes(t));
+      eq(actionAttacks(m, slot).map(x => x.type), want, `${t1}+${t2} スロット${slot + 1}`);
+      eq(canAttackFrom(m, slot), want.length > 0, `${t1}+${t2} スロット${slot + 1} で攻撃できるか`);
+    }
+  }
+  // 実際の対戦でも：近接＋魔法は、前列なら魔法 → 近接、後列なら魔法だけ
+  const front = board([mk(D('melee', 2, 'magic', 1, 10))], [mk(GOLEM)]);
+  eq(attacks(front).map(e => [e.type, e.source, e.dmg]), [['magic', 'base', 1], ['melee', 'base', 2]]);
+  const back = board([mk(WOLF), mk(D('melee', 2, 'magic', 1, 10))], [mk(GOLEM)]);
+  eq(attacks(back).filter(e => e.attacker.card.id !== WOLF).map(e => e.type), ['magic']);
+  // 遠隔＋カオスは、前列ならカオスだけ、後列ならカオス → 遠隔
+  const rc = D('ranged', 2, 'chaos', 1, 10);
+  eq(attacks(board([mk(rc)], [mk(GOLEM)])).map(e => e.type), ['chaos']);
+  eq(attacks(board([mk(WOLF), mk(rc)], [mk(GOLEM)])).filter(e => e.attacker.card.id === rc).map(e => e.type), ['chaos', 'ranged']);
+});
+
+test('2種類の攻撃：装備は同じ種類なら加算、違う種類なら攻撃が増える。種類は本体と装備で3つまで', () => {
+  const mm = D('melee', 2, 'magic', 1, 10);
+  // 同じ種類（魔法+2）：魔法 1 → 3。攻撃の数は増えない
+  eq(getAttacks(mk(mm, TOME)).map(a => [a.type, a.source, a.base, a.atk]), [['melee', 'base', 2, 2], ['magic', 'base', 1, 3]]);
+  // 違う種類（遠隔+カオスの装備）：上限3つまで。攻撃順でカオスが先に入り、遠隔は使えない
+  const rcItem = tequip('t_rc', 2, null, { atk: { ranged: 1, chaos: 1 } });
+  eq(getAttacks(mk(mm, rcItem)).map(a => [a.type, a.source]), [['melee', 'base'], ['magic', 'base'], ['chaos', 'weapon']]);
+  eq(cappedWeaponAttacks(CARD_BY_ID[mm], CARD_BY_ID[rcItem]), [{ type: 'ranged', atk: 1 }]);
+  // 片方は同じ・片方は違う（近接+1 と 遠隔+1）：近接は加算、遠隔は増える（3つ目）
+  const mrItem = tequip('t_mr', 2, null, { atk: { melee: 1, ranged: 1 } });
+  eq(getAttacks(mk(mm, mrItem)).map(a => [a.type, a.atk]), [['melee', 3], ['magic', 1], ['ranged', 1]]);
+  eq(cappedWeaponAttacks(CARD_BY_ID[mm], CARD_BY_ID[mrItem]), []);
+  // 1種類のモンスターに2種類の装備：3つになる
+  eq(getAttacks(mk(WOLF, rcItem)).map(a => a.type), ['melee', 'chaos', 'ranged']);
+  // 前列の近接＋魔法＋カオス（装備）は 魔法 → カオス → 近接
+  eq(attacks(board([mk(mm, rcItem)], [mk(GOLEM)])).map(e => [e.type, e.source]), [['magic', 'base'], ['chaos', 'weapon'], ['melee', 'base']]);
+  // 追加したカードの装備（実データ）：2種類を足す装備は7個、どれも2種類だけ
+  const duals = EQUIPS.filter(c => Object.keys(c.atk || {}).length > 1);
+  eq(duals.map(c => c.id), ['e45', 'e46', 'e47', 'e48', 'e49', 'e50', 'e51']);
+  for (const d of duals) for (let lv = 1; lv <= maxLevel(d.id); lv++) eq(Object.keys(cardAt(d.id, lv).atk).length, 2, d.name);
+});
+
+test('2種類の攻撃：攻撃の種類に関わるスキルは、対応する攻撃にだけ効く', () => {
+  const val = (m, type) => getAttacks(m).find(a => a.type === type).atk;
+  // Inspire（近接だけ）・Shoot Command（遠隔だけ）
+  const mr = mk(D('melee', 2, 'ranged', 2, 10));
+  mr.buff.inspire = 2;
+  eq([val(mr, 'melee'), val(mr, 'ranged')], [4, 2], 'Inspire は近接だけ');
+  mr.buff.inspire = 0; mr.buff.shoot = 2;
+  eq([val(mr, 'melee'), val(mr, 'ranged')], [2, 4], 'Shoot Command は遠隔だけ');
+  // Demoralize（近接と遠隔。魔法・カオスには効かない）
+  const mg = mk(D('melee', 3, 'magic', 2, 10));
+  mg.status.demoralize = 1;
+  eq([val(mg, 'melee'), val(mg, 'magic')], [2, 2], 'Demoralize は近接・遠隔だけ');
+  // Suppress Magic（魔法だけ）・Jinx（カオスだけ）
+  const mc = mk(D('magic', 3, 'chaos', 3, 10));
+  mc.status.suppress = 2;
+  eq([val(mc, 'magic'), val(mc, 'chaos')], [1, 3], 'Suppress Magic は魔法だけ');
+  mc.status.suppress = 0; mc.status.jinx = 2;
+  eq([val(mc, 'magic'), val(mc, 'chaos')], [3, 1], 'Jinx はカオスだけ');
+  // Batter（近接の直後だけ）・Craze（遠隔の直後だけ）・Recast（魔法の直後だけ）・Scatter（カオスの直後だけ）
+  eq(actionAttacks(mk(D('melee', 2, 'magic', 1, 10, 'batter:1')), 0).map(a => [a.type, a.source]), [['magic', 'base'], ['melee', 'base'], ['melee', 'batter']]);
+  eq(actionAttacks(mk(D('ranged', 2, 'magic', 1, 10, 'craze:1')), 1).map(a => [a.type, a.source]), [['magic', 'base'], ['ranged', 'base'], ['ranged', 'craze']]);
+  eq(actionAttacks(mk(D('melee', 2, 'magic', 1, 10, 'recast:1')), 0).map(a => [a.type, a.source]), [['magic', 'base'], ['magic', 'recast'], ['melee', 'base']]);
+  eq(actionAttacks(mk(D('melee', 2, 'chaos', 1, 10, 'scatter:1')), 0).map(a => [a.type, a.source]), [['chaos', 'base'], ['chaos', 'scatter'], ['melee', 'base']]);
+  // Batter は後列で近接が使えなければ入らない（魔法だけ）
+  eq(actionAttacks(mk(D('melee', 2, 'magic', 1, 10, 'batter:1')), 1).map(a => a.type), ['magic']);
+  // Reach（近接を後列から）・Point Blank（遠隔を前列から）は、その攻撃だけに効く
+  eq(actionAttacks(mk(D('melee', 2, 'magic', 1, 10, 'reach')), 1).map(a => a.type), ['magic', 'melee']);
+  eq(actionAttacks(mk(D('ranged', 2, 'chaos', 1, 10, 'pointblank')), 0).map(a => a.type), ['chaos', 'ranged']);
+  eq(actionAttacks(mk(D('melee', 2, 'ranged', 1, 10, 'reach')), 1).map(a => a.type), ['ranged', 'melee'], '近接＋遠隔に Reach なら、後列で両方');
+  // 「すべての攻撃力」を上げる効果（Swallow など）は、それぞれの攻撃に加わる
+  const sw = mk(D('melee', 2, 'magic', 1, 10));
+  sw.bonusAtk = 1;
+  eq(getAttacks(sw).map(a => a.atk), [3, 2], 'Swallow は両方の攻撃に+1');
+  // Silence は魔法だけを止める（近接は攻撃する）
+  const si = mk(D('melee', 2, 'magic', 1, 10));
+  si.status.silence = 2;
+  eq(actionAttacks(si, 0).map(a => a.skip || a.type), ['silence', 'melee']);
+});
+
+test('2種類の攻撃：CPUは、そのスロットで使える攻撃の合計で配置を決める（近接＋魔法は前列が有利）', () => {
+  // 前列に遠隔がいるとき：近接＋魔法は前へ（遠隔を後ろへ押し出すと、両方が攻撃できる）
+  const mm = CARD_BY_ID[D('melee', 2, 'magic', 2, 10)];
+  eq(cpuSlotFor(mm, [mk(ELF), null, null]), 0);
+  // 前列に近接がいるとき：遠隔＋魔法は後列へ
+  const rm = CARD_BY_ID[D('ranged', 2, 'magic', 2, 10)];
+  eq(cpuSlotFor(rm, [mk(WOLF), null, null]), 1);
+  // 並びの評価は、使える攻撃の合計
+  eq(lineupAttack([mk(mm.id)]), 4);
+  eq(lineupAttack([mk(WOLF), mk(mm.id)]), 2 + 2, '後列の近接＋魔法は魔法だけ数える');
+  // 前列が空のとき、CPUは前列で使える攻撃を持つモンスターを優先して出す（2つ目の攻撃が近接でもよい）
+  const s = board([], [mk(GOLEM)]);
+  const p = s.players[0];
+  p.hand = [{ uid: 9001, card: CARD_BY_ID[ELF] }, { uid: 9002, card: CARD_BY_ID[D('ranged', 1, 'melee', 1, 6)] }];
+  p.crystals = 10;
+  eq(cpuNextAction(s).uid, 9002);
+});
+
+test('2種類の攻撃：追加したモンスター（各色2体）のデータ。2つ目の攻撃は全レベルにあり、種類は2つまで', () => {
+  const duals = MONSTER_DEFS.filter(d => d.type2);
+  eq(duals.map(d => d.id), ['r21', 'r22', 'b20', 'b21', 'g21', 'g22', 'y22', 'y23', 'p21', 'p22']);
+  for (const color in COLORS) eq(duals.filter(d => d.color === color).length, 2, color);
+  for (const d of duals) {
+    assert(d.type2 !== d.type && ATTACK_TYPES[d.type2] && d.rarity !== 'common', d.name);
+    d.levels.forEach((l, i) => assert(Number.isInteger(l.atk2) && l.atk2 > 0, `${d.name} Lv${i + 1} の atk2`));
+    eq(baseAttacksOf(cardAt(d.id, 1)).length, 2, d.name);
+    // 1種類だけの同じレアリティ・コストのカードより、それぞれの攻撃力は低い（合計でも大きく上回らない）
+    const single = MONSTER_DEFS.filter(x => !x.type2 && !x.elite && x.rarity === d.rarity && x.cost === d.cost);
+    const maxSingle = Math.max(...single.map(x => x.levels[0].atk));
+    assert(d.levels[0].atk <= maxSingle && d.levels[0].atk2 < maxSingle, `${d.name} の攻撃力は低め`);
+  }
+  // ヒーロースキル「蝕む刃」：2つ目の攻撃が近接・カオスでも対象になる
+  const s = board([], []);
+  s.players[0].hero = { id: 'venoa', name: 'v', skill: 'venomblade' };
+  const h = give(s, 0, 'b21'); // 魔法＋カオス
+  assert(playMonster(s, 0, h, 0));
+  eq(s.players[0].slots[0].perm, { disease: 1 });
+});
+
+test('2種類の攻撃：スキル辞典に「複数の攻撃」の項目があり、攻撃タイプの項目に2種類の攻撃を持つカードが並ぶ', () => {
+  const multi = DICT_BY_KEY['rule:multi'];
+  assert(multi && multi.desc.includes(`${MAX_ATTACK_TYPES}つまで`) && multi.rel.includes('rule:order'));
+  const ids = e => dictCards(DICT_BY_KEY[e]).map(c => c.id);
+  assert(ids('rule:multi').includes('r21') && ids('rule:multi').includes('e46'));
+  assert(ids('type:magic').includes('r21') && ids('type:melee').includes('r21') && !ids('type:ranged').includes('r21'), '近接＋魔法は、近接と魔法の項目に出る');
+  assert(ids('type:chaos').includes('e46') && ids('type:ranged').includes('e46'));
+  assert(dictCards(DICT_BY_KEY['type:melee']).every(c => c.tag === '2種類の攻撃' && attackTypesOf(cardAt(c.id)).length > 1));
 });
 
 test('攻撃の順番：Batter は近接の直後、Doublestrike は近接が当たった直後', () => {
@@ -3806,7 +3955,7 @@ test('オート：オートで戦っても、デイリークエストとイベ�
   const stats = battleStats(s, true, { type: 'free' }, p.deck);
   assert(stats.play === 1 && stats.win === 1 && Object.keys(stats).some(k => k.startsWith('kill_')), JSON.stringify(stats));
   questProgress(p, stats, day(4));
-  eq([p.daily.quests[0].progress, p.daily.quests[2].progress, p.daily.quests[1].progress], [1, 1, stats.kill_melee || 0]);
+  eq([p.daily.quests[0].progress, p.daily.quests[2].progress, p.daily.quests[1].progress], [1, 1, Math.min(QUEST_BY_ID.kill_melee.n, stats.kill_melee || 0)], '進み具合は目標の数で止まる');
   startEventRun(p, monday(5));
   const r = recordEventBattle(p, true, monday(5));
   eq([r.wins, r.tiers.length], [1, 1], 'イベントの成績と報酬');
@@ -5967,13 +6116,13 @@ test('オート（つよい）：今の思考（ふつう）に大きく勝ち�
     return a;
   };
   const play = (a, b, brains) => playOut(newGame(a, b, rng), pi => brains[pi]).winner;
-  for (let g = 0; g < 60; g++) { // 同じデッキの組で、席を入れ替えて2試合
+  for (let g = 0; g < 120; g++) { // 同じデッキの組で、席を入れ替えて2試合
     const a = randomDeck(rng, { level: 3 }), b = randomDeck(rng, { level: 3 });
     if (play(a, b, [strong, autoNextAction]) === 0) wins++;
     if (play(b, a, [autoNextAction, strong]) === 1) wins++;
     games += 2;
   }
-  assert(wins / games >= 0.56, `つよいの勝率 ${Math.round(100 * wins / games)}%`); // 120試合なので幅がある（大量対戦での実測は約65%）
+  assert(wins / games >= 0.56, `つよいの勝率 ${Math.round(100 * wins / games)}%`); // 240試合なので幅がある（大量対戦での実測は約61%）
   const A = CONFIG.AUTO_AI;
   assert(ms / plans < 30, `平均の思考時間 ${(ms / plans).toFixed(1)}ms`);
   assert(maxMs < A.BUDGET_MS, `最大の思考時間 ${maxMs.toFixed(0)}ms`);
@@ -7379,8 +7528,10 @@ test('並び替え：各並び順で正しい順番になり、同じ値のカ�
   check('level', true, c => -cardLevel(p, c.id));
   check('got', false, c => -((p.cards[c.id] && p.cards[c.id].got) || 0));
   check('copies', false, c => -(p.cards[c.id] ? p.cards[c.id].copies + 1 : 0));
-  check('atk', false, c => -c.atk, true);
-  check('atk', true, c => -c.atk, true);
+  // 攻撃力順は、2種類の攻撃を持つモンスターなら合計で比べる
+  const atkSum = c => baseAttacksOf(c).reduce((n, a) => n + a.atk, 0);
+  check('atk', false, c => -atkSum(c), true);
+  check('atk', true, c => -atkSum(c), true);
   check('hp', false, c => -c.hp, true);
   // 名前順は50音順。逆にすると逆になる
   const byName = cardSortList(pool, 'name').map(c => cardYomi(c.id));
@@ -7412,7 +7563,11 @@ test('絞り込み：色・レアリティ・種類・攻撃タイプ・所持�
   assert(ids({ kind: 'equip' }).every(c => c.kind === 'equip'));
   const ranged = ids({ types: ['ranged'] });
   assert(ranged.some(c => c.kind === 'monster') && ranged.some(c => c.kind === 'equip') && ranged.every(c => c.kind !== 'flash'));
-  assert(ranged.every(c => (c.kind === 'monster' ? c.type === 'ranged' : c.atk.ranged > 0)));
+  assert(ranged.every(c => (c.kind === 'monster' ? c.type === 'ranged' || c.type2 === 'ranged' : c.atk.ranged > 0)));
+  // 複数の攻撃を持つカードは、どれか1つに当てはまれば残る（2つ目の攻撃でも当てはまる）
+  assert(ranged.some(c => c.id === 'r22') && ids({ types: ['melee'] }).some(c => c.id === 'r22'), '近接＋遠隔のモンスターは、近接でも遠隔でも出る');
+  assert(ids({ types: ['chaos'] }).some(c => c.id === 'e46') && ids({ types: ['ranged'] }).some(c => c.id === 'e46'), '遠隔＋カオスの装備');
+  assert(!ids({ types: ['chaos'] }).some(c => c.id === 'r22'), '持っていない攻撃では出ない');
   // 所持のみ・強化できるカードのみ
   eq(ids({ owned: true }).map(c => c.id).sort(), Object.keys(p.cards).sort());
   p.cards.r02 = { level: 1, copies: 5 };

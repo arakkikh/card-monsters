@@ -60,7 +60,7 @@ chapter('rules', '2. 基本ルール', `
   <h3>攻撃の順番と狙う相手</h3>
   ${li([
   `<b>モンスターの順番</b>：スロット3 → 2 → 1。`,
-  `<b>1体が複数の攻撃を持つとき</b>（装備で攻撃の種類が増えたとき）：魔法 → カオス → 遠隔 → 近接 の順。`,
+  `<b>1体が複数の攻撃を持つとき</b>（2種類の攻撃を持つモンスターや、装備で攻撃の種類が増えたとき）：魔法 → カオス → 遠隔 → 近接 の順。<b>そのスロットで使えない攻撃はとばします</b>（近接＋魔法のモンスターが後列にいれば、魔法だけ）。攻撃の種類は、本体と装備を合わせて${MAX_ATTACK_TYPES}つまでです。`,
   `<b>近接</b>：相手の前列。`,
   `<b>遠隔</b>：対角 → 正面 → 前列の順（スロット2からは相手のスロット3、スロット3からは相手のスロット2が先）。${skillLink('taunt')} 持ちがいれば、そちらが最優先。`,
   `<b>魔法</b>：正面（同じ番号のスロット）。いなければ前列。`,
@@ -168,7 +168,7 @@ chapter('rules', '2. 基本ルール', `
     const rows = lv.map(x => [`Lv${x.level}`, x.cost, stat(x), skillsText(x.skills) || '-']);
     const one = cardAt(c.id, 1);
     return `<div class="cd keep c-${c.color || 'none'}" id="card-${c.id}" data-search="${esc(c.name)}" data-kind="カード" data-card="${c.id}" data-stats="${esc(lv.map(x => [x.level, x.cost, x.atk == null || typeof x.atk === 'object' ? JSON.stringify(x.atk || null) : x.atk, x.hp || 0, x.armor || 0, (x.skills || []).map(k => k.id + (k.x === undefined ? '' : k.x)).join('+')].join(':')).join('|'))}">
-      <div class="cd-h"><span class="cd-art">${cardArt(one)}</span><div><b>${esc(c.name)}</b>${rankBadge(c.id)}<br><small><span class="r-${c.rarity}">${R[c.rarity].name}</span>・${colorName(c.color)}・${kindName[c.kind]}${c.kind === 'monster' ? `・${ATTACK_TYPES[c.type].icon}${ATTACK_TYPES[c.type].name}` : ''}${def.elite ? '・<b class="elite-t">Elite</b>' : ''}</small>
+      <div class="cd-h"><span class="cd-art">${cardArt(one)}</span><div><b>${esc(c.name)}</b>${rankBadge(c.id)}<br><small><span class="r-${c.rarity}">${R[c.rarity].name}</span>・${colorName(c.color)}・${kindName[c.kind]}${c.kind === 'monster' ? `・${baseAttacksOf(c).map(a => `${ATTACK_TYPES[a.type].icon}${ATTACK_TYPES[a.type].name}`).join('＋')}` : ''}${def.elite ? '・<b class="elite-t">Elite</b>' : ''}</small>
         <br><small>採用時の勝率：${r.rate == null ? '測定なし' : `<b>${r.rate}%</b>（${r.n}試合）`}${RATE1[c.id] ? `　Lv1では${RATE1[c.id].rate}%` : ''}</small></div></div>
       ${table(['', 'コスト', c.kind === 'monster' ? '攻撃/HP' : '効果', 'スキル'], rows, 'lv')}
       ${def.options ? `<p class="cd-o">選択スキル（Lv${def.optionLevel}から1つ選べる）：${def.options.map(k => skillTag(k.id, k.x)).join(' ／ ')}</p>` : ''}

@@ -108,6 +108,14 @@ function artHumanoid(p, o) {
     sling: () => aL('M75 62 q10 -18 4 -30', WOOD, 1.6) + aC(79, 31, 4, '#a8a29e'),
   };
   if (F[o.weapon]) g += F[o.weapon]();
+  // 2つ目の武器（左手。2種類の攻撃を持つモンスターが、2つ目の攻撃の道具を持つ）
+  const F2 = {
+    orb: () => aC(23, 58, 7.5, p.accent, 'opacity=".45"') + aC(23, 58, 5, o.orb2 || p.light) + aE(21, 56, 1.8, 1.2, '#fff', 'opacity=".8"'),
+    dice: () => aR(14, 51, 13, 13, '#f8fafc', 2.5) + aC(18, 55, 1.4, INK, NO) + aC(23.5, 60.5, 1.4, INK, NO) + aC(20.7, 57.7, 1.5, o.orb2 || p.main, NO),
+    knife: () => aL('M26 62 L12 49', metal, 3) + aL('M24 60 l-3 4', p.accent, 2),
+    javelin: () => aL('M20 78 L30 34', WOOD, 2) + aL('M14 76 L24 34', WOOD, 2) + aP('M28 36 L31 27 L33 37Z', metal) + aP('M22 36 L25 27 L27 37Z', metal),
+  };
+  if (F2[o.weapon2]) g += F2[o.weapon2]();
   // 頭
   const hx = 50, hy = 31, hr = 12;
   if (o.hat === 'ears') g += aP('M39 30 L26 22 L39 36Z', skin) + aP('M61 30 L74 22 L61 36Z', skin);
@@ -257,6 +265,17 @@ const ART_BUILDERS = { beast: artBeast, humanoid: artHumanoid, bird: artBird, bl
 
 // ---------- モンスター40体の設定：[種族, 形・装飾] ----------
 const MONSTER_ART = {
+  // 2種類の攻撃を持つモンスター（weapon2：左手に2つ目の攻撃の道具）
+  r21: ['humanoid', { hat: 'band', weapon: 'sword', weapon2: 'orb', orb2: '#fb923c', c1: '#991b1b', cape: '#1f2937', hair: '#fde047', eye: 'angry', armUp: true }],
+  r22: ['humanoid', { hat: 'plume', weapon: 'spear', weapon2: 'javelin', armor: true, metal: '#fca5a5', c1: '#7f1d1d', hair: '#fbbf24', longHair: true, cape: '#ea580c' }],
+  b20: ['humanoid', { hat: 'fullhelm', weapon: 'spear', weapon2: 'orb', orb2: '#e0f2fe', armor: true, metal: '#bae6fd', c1: '#1e3a8a', cape: '#0c4a6e' }],
+  b21: ['humanoid', { hat: 'hood', weapon: 'staff', weapon2: 'dice', orb2: '#7c3aed', robe: true, c1: '#0e7490', orb: '#a5f3fc', hair: '#e0f2fe', longHair: true }],
+  g21: ['humanoid', { hat: 'leaf', weapon: 'bow', weapon2: 'orb', orb2: '#bbf7d0', c1: '#166534', hair: '#78350f', scarf: '#a3e635' }],
+  g22: ['beast', { moss: true, low: true, tail: 'long', ear: '', snout: 1.4, teeth: true, spikes: true, col: '#4d7c0f', spots: '#bef264', leg: 8, eye: 'angry' }],
+  y22: ['humanoid', { hat: 'straw', weapon: 'spear', weapon2: 'javelin', c1: '#a16207', c2: '#57534e', scarf: '#dc2626', beard: true }],
+  y23: ['humanoid', { hat: 'plume', weapon: 'lightningbow', weapon2: 'orb', orb2: '#fef9c3', armor: true, metal: '#fde68a', cape: '#1e3a8a', c1: '#ca8a04' }],
+  p21: ['humanoid', { hat: 'witch', weapon: 'staff', weapon2: 'dice', orb2: '#a3e635', robe: true, c1: '#3b0764', orb: '#a3e635', eye: 'red' }],
+  p22: ['humanoid', { hat: 'hood', weapon: 'sword', weapon2: 'dice', orb2: '#a855f7', c1: '#1e1b4b', cape: '#3b0764', eye: 'red', mouth: 'grin', armUp: true }],
   // 赤：炎の獣と戦士
   r01: ['beast', { size: 0.8, ear: 'round', tail: 'thin', tailCol: '#fca5a5', snout: 0.8, whisker: true, leg: 9 }],
   r02: ['beast', { ear: 'point', tail: 'flame', teeth: true, eye: 'angry', col: '#b91c1c' }],
@@ -409,6 +428,14 @@ function monsterArt(card) {
 
 // ---------- 装備（武器・防具・アクセサリー） ----------
 const ITEM_ART = {
+  // 2種類の攻撃を足す装備
+  e45: p => aL('M30 80 L70 20', METAL, 7) + aL('M30 80 L70 20', '#c4b5fd', 2.4) + aL('M24 64 L44 84', '#4c1d95', 6) + aC(26, 84, 4, '#a78bfa') + aC(52, 47, 3.6, '#7c3aed', NO) + artStar(66, 30, 4, '#fff'),
+  e46: p => aL('M22 56 H78', WOOD, 4) + aL('M22 64 H78', '#57534e', 4) + aL('M62 36 Q80 60 62 84', METAL, 3) + aL('M62 36 L62 84', '#fff', 0.8) + aP('M14 56 l9 -4 v8z', METAL) + aP('M14 64 l9 -4 v8z', '#a855f7') + aL('M82 24 q8 6 0 12 q-8 6 0 12', '#a3e635', 2),
+  e47: p => aL('M24 84 L72 20', WOOD, 4) + aP('M68 24 L84 8 L78 32Z', METAL) + aP('M30 78 Q20 70 26 58 Q30 66 34 62 Q32 72 38 74Z', '#f97316') + aP('M32 76 Q26 70 29 64 Q31 69 34 68Z', '#fde047', NO) + aL('M44 60 l8 6', '#dc2626', 4),
+  e48: p => aL('M50 88 L50 30', '#bae6fd', 6) + aL('M50 88 L50 30', '#fff', 1.6, 'opacity=".7"') + aL('M36 74 H64', '#1e3a8a', 5) + aP('M50 30 L40 16 L50 4 L60 16Z', '#38bdf8') + aP('M50 4 L50 30 L40 16Z', '#e0f2fe') + artStar(72, 22, 4, '#fff'),
+  e49: p => aL('M30 12 Q86 50 30 88', '#eab308', 5) + aL('M34 14 Q82 50 34 86', '#38bdf8', 2) + aL('M30 12 L30 88', '#f1f5f9', 1.2) + aL('M22 50 H82', '#a8a29e', 3) + aP('M80 44 l12 6 l-12 6z', '#fde68a') + artStar(70, 24, 4, '#fff'),
+  e50: p => aL('M36 76 L66 30', METAL, 6) + aL('M36 76 L66 30', '#d8b4fe', 1.6) + aL('M28 66 L46 80', '#3b0764', 5) + aC(30, 82, 4, '#a3e635') + aL('M70 60 q10 -4 8 6 q-2 10 -12 4 q-6 -6 2 -10', '#a855f7', 2.4),
+  e51: p => aL('M34 14 Q76 50 34 86', WOOD, 5) + aL('M34 14 L34 86', '#f1f5f9', 1.2) + aC(34, 12, 6, '#4ade80') + aP('M60 40 q12 -6 14 4 q-10 4 -14 -4z', '#22c55e') + aP('M58 60 q12 6 14 -4 q-10 -4 -14 4z', '#16a34a') + aC(34, 88, 4, '#a3e635'),
   e01: p => aL('M30 78 L70 22', METAL, 8) + aL('M30 78 L70 22', '#fff', 2, 'opacity=".7"') + aL('M24 62 L44 82', '#b45309', 6) + aC(26, 82, 4, '#fbbf24'),
   e02: p => aL('M34 16 Q84 50 34 84', WOOD, 5.5) + aL('M34 16 L34 84', '#f1f5f9', 1.4) + aL('M26 50 H80', '#a8a29e', 3) + aP('M78 44 l12 6 l-12 6z', METAL),
   e03: p => aC(50, 46, 24, '#7c3aed') + aC(50, 46, 24, '#c4b5fd', 'opacity=".35"') + aE(42, 38, 8, 5, '#fff', 'opacity=".7"') + aP('M30 74 H70 L64 86 H36Z', '#b45309'),

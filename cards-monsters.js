@@ -3,6 +3,7 @@
 //   color:  red / blue / green / yellow / purple
 //   rarity: common / rare / epic / legend（最大レベルはコモン・レアがLv5、エピック・レジェンドがLv4）
 //   type:   melee（近接）/ ranged（遠隔）/ magic（魔法）/ chaos（カオス）
+//   type2:  （省略可）2つ目の攻撃の種類。書いたら levels の各行に atk2（その攻撃力）も書く。攻撃の順番は種類で決まる（魔法 → カオス → 遠隔 → 近接）
 //   image:  （省略可）絵の画像のパス。書くとSVGの絵のかわりにその画像を表示する
 //           例： image: 'images/r01.png'  ※ 正方形の画像を推奨。読み込めないときはSVGの絵に戻る
 //   elite: true ならイベント限定の Elite カード（パックから出ない。作成・分解できない。CPUの抽選にも入らない）
@@ -818,5 +819,87 @@ const MONSTER_DEFS = [
       { hp: 9, atk: 3, skills: [{ id: 'fortune', x: 3 }] },
       { hp: 10, atk: 3, skills: [{ id: 'fortune', x: 3 }] },
       { hp: 11, atk: 3, skills: [{ id: 'fortune', x: 3 }] },
+    ] },
+  // ---- 追加のモンスター（2種類の攻撃を持つ10体。各色2体） ----
+  //   type2 / atk2：2つ目の攻撃の種類と攻撃力。1種類だけのカードより、それぞれの攻撃力は低め
+  { id: 'r21', name: '炎刃の魔剣士', icon: '🗡️', color: 'red', rarity: 'rare', cost: 4, type: 'melee', type2: 'magic',
+    levels: [
+      { hp: 10, atk: 2, atk2: 2, skills: [] },
+      { hp: 11, atk: 3, atk2: 2, skills: [] },
+      { hp: 12, atk: 3, atk2: 2, skills: [] },
+      { hp: 13, atk: 3, atk2: 3, skills: [] },
+      { hp: 14, atk: 4, atk2: 3, skills: [{ id: 'piercing' }] },
+    ] },
+  { id: 'r22', name: '灼槍の戦乙女', icon: '🔱', color: 'red', rarity: 'epic', cost: 5, type: 'melee', type2: 'ranged', optionLevel: 3,
+    options: [{ id: 'batter', x: 1 }, { id: 'piercing' }, { id: 'thorns', x: 1 }],
+    levels: [
+      { hp: 12, atk: 3, atk2: 2, skills: [{ id: 'inspire', x: 1 }] },
+      { hp: 13, atk: 4, atk2: 2, skills: [{ id: 'inspire', x: 1 }] },
+      { hp: 15, atk: 4, atk2: 3, skills: [{ id: 'inspire', x: 1 }] },
+      { hp: 16, atk: 5, atk2: 3, skills: [{ id: 'inspire', x: 2 }] },
+    ] },
+  { id: 'b20', name: '氷槍の守衛', icon: '🧊', color: 'blue', rarity: 'rare', cost: 4, type: 'melee', type2: 'magic',
+    levels: [
+      { hp: 10, atk: 2, atk2: 1, skills: [{ id: 'shield', x: 1 }] },
+      { hp: 11, atk: 2, atk2: 1, skills: [{ id: 'shield', x: 1 }] },
+      { hp: 12, atk: 2, atk2: 2, skills: [{ id: 'shield', x: 1 }] },
+      { hp: 13, atk: 3, atk2: 2, skills: [{ id: 'shield', x: 1 }] },
+      { hp: 14, atk: 3, atk2: 2, skills: [{ id: 'shield', x: 2 }] },
+    ] },
+  { id: 'b21', name: '潮騒の巫女', icon: '🐚', color: 'blue', rarity: 'epic', cost: 5, type: 'magic', type2: 'chaos', optionLevel: 3,
+    options: [{ id: 'suppress', x: 1 }, { id: 'magicblast', x: 1 }, { id: 'masscleanse' }],
+    levels: [
+      { hp: 8, atk: 2, atk2: 2, skills: [{ id: 'silence', x: 1 }] },
+      { hp: 9, atk: 3, atk2: 2, skills: [{ id: 'silence', x: 1 }] },
+      { hp: 10, atk: 3, atk2: 3, skills: [{ id: 'silence', x: 1 }] },
+      { hp: 11, atk: 4, atk2: 3, skills: [{ id: 'silence', x: 1 }, { id: 'suppress', x: 1 }] },
+    ] },
+  { id: 'g21', name: '蔓弓の森番', icon: '🌿', color: 'green', rarity: 'rare', cost: 4, type: 'ranged', type2: 'magic',
+    levels: [
+      { hp: 9, atk: 2, atk2: 1, skills: [{ id: 'heal', x: 1 }] },
+      { hp: 10, atk: 2, atk2: 1, skills: [{ id: 'heal', x: 1 }] },
+      { hp: 11, atk: 2, atk2: 2, skills: [{ id: 'heal', x: 2 }] },
+      { hp: 12, atk: 3, atk2: 2, skills: [{ id: 'heal', x: 2 }] },
+      { hp: 13, atk: 3, atk2: 2, skills: [{ id: 'heal', x: 2 }, { id: 'cleanse' }] },
+    ] },
+  { id: 'g22', name: '苔むす双頭獣', icon: '🐊', color: 'green', rarity: 'epic', cost: 5, type: 'melee', type2: 'magic', optionLevel: 3,
+    options: [{ id: 'taunt' }, { id: 'regenerate', x: 1 }, { id: 'heal', x: 2 }],
+    levels: [
+      { hp: 13, atk: 3, atk2: 1, skills: [{ id: 'thorns', x: 1 }] },
+      { hp: 14, atk: 3, atk2: 1, skills: [{ id: 'thorns', x: 1 }] },
+      { hp: 16, atk: 4, atk2: 1, skills: [{ id: 'thorns', x: 1 }] },
+      { hp: 17, atk: 4, atk2: 2, skills: [{ id: 'thorns', x: 1 }, { id: 'taunt' }] },
+    ] },
+  { id: 'y22', name: '槍弓の傭兵', icon: '🪃', color: 'yellow', rarity: 'rare', cost: 4, type: 'melee', type2: 'ranged',
+    levels: [
+      { hp: 10, atk: 3, atk2: 2, skills: [] },
+      { hp: 11, atk: 3, atk2: 2, skills: [] },
+      { hp: 13, atk: 4, atk2: 3, skills: [] },
+      { hp: 14, atk: 4, atk2: 3, skills: [] },
+      { hp: 15, atk: 4, atk2: 4, skills: [{ id: 'piercing' }] },
+    ] },
+  { id: 'y23', name: '雷光の聖弓手', icon: '⚡', color: 'yellow', rarity: 'epic', cost: 5, type: 'ranged', type2: 'magic', optionLevel: 3,
+    options: [{ id: 'craze', x: 1 }, { id: 'piercing' }, { id: 'shoot', x: 1 }],
+    levels: [
+      { hp: 9, atk: 3, atk2: 1, skills: [{ id: 'antiair', x: 1 }] },
+      { hp: 10, atk: 3, atk2: 2, skills: [{ id: 'antiair', x: 1 }] },
+      { hp: 11, atk: 4, atk2: 2, skills: [{ id: 'antiair', x: 1 }] },
+      { hp: 12, atk: 5, atk2: 2, skills: [{ id: 'antiair', x: 1 }, { id: 'shoot', x: 1 }] },
+    ] },
+  { id: 'p21', name: '影縫いの呪術師', icon: '🕯️', color: 'purple', rarity: 'rare', cost: 4, type: 'chaos', type2: 'magic',
+    levels: [
+      { hp: 8, atk: 3, atk2: 1, skills: [{ id: 'demoralize', x: 1 }] },
+      { hp: 9, atk: 3, atk2: 1, skills: [{ id: 'demoralize', x: 1 }] },
+      { hp: 10, atk: 3, atk2: 2, skills: [{ id: 'demoralize', x: 1 }] },
+      { hp: 11, atk: 4, atk2: 2, skills: [{ id: 'demoralize', x: 1 }] },
+      { hp: 12, atk: 4, atk2: 2, skills: [{ id: 'demoralize', x: 2 }] },
+    ] },
+  { id: 'p22', name: '混沌の双刃', icon: '🦂', color: 'purple', rarity: 'epic', cost: 5, type: 'melee', type2: 'chaos', optionLevel: 3,
+    options: [{ id: 'swallow', x: 1 }, { id: 'thorns', x: 1 }, { id: 'demoralize', x: 1 }],
+    levels: [
+      { hp: 9, atk: 2, atk2: 2, skills: [{ id: 'disease', x: 1 }] },
+      { hp: 11, atk: 3, atk2: 2, skills: [{ id: 'disease', x: 1 }] },
+      { hp: 14, atk: 3, atk2: 3, skills: [{ id: 'disease', x: 1 }] },
+      { hp: 15, atk: 4, atk2: 3, skills: [{ id: 'disease', x: 1 }, { id: 'swallow', x: 1 }] },
     ] },
 ];

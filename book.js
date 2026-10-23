@@ -235,7 +235,7 @@ function dictEntryHtml(e) {
   const cards = dictCards(e);
   const cardHtml = cards.map(c => {
     const card = bookCardPlain(c.id);
-    return cardFaceHtml(card, { cls: owns(profile, c.id) ? 'owned' : 'unowned', attrs: `data-card="${c.id}"`, extra: c.opt ? '<span class="card-own">選択スキル</span>' : '' });
+    return cardFaceHtml(card, { cls: owns(profile, c.id) ? 'owned' : 'unowned', attrs: `data-card="${c.id}"`, extra: c.opt ? '<span class="card-own">選択スキル</span>' : c.tag ? `<span class="card-own opt">${c.tag}</span>` : '' });
   }).join('');
   const rel = e.rel.map(k => DICT_BY_KEY[k]).map(o => `<button class="btn chip" data-dict="${o.key}">${o.icon} ${o.name}</button>`).join('');
   return `<div class="dict-entry">

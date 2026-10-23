@@ -20,6 +20,24 @@ const ATTACK_TYPES = {
   chaos:  { name: 'カオス', icon: '🌀' },
 };
 
+// 1体のモンスターが持てる攻撃の種類の上限（本体＋装備を合わせて）。
+// 本体は最大2種類（type と type2）。装備で違う種類が足されて上限を超えるときは、超えたぶんの攻撃は使えない
+const MAX_ATTACK_TYPES = 3;
+
+// モンスター本体の攻撃 [{ type, atk }]（1〜2個。2個目は type2 / atk2）
+function baseAttacksOf(card) {
+  const list = [{ type: card.type, atk: card.atk }];
+  if (card.type2 && card.type2 !== card.type) list.push({ type: card.type2, atk: card.atk2 || 0 });
+  return list;
+}
+
+// そのカードが持つ攻撃の種類（モンスターは本体の攻撃、装備は足される攻撃。フラッシュはなし）
+function attackTypesOf(card) {
+  if (card.kind === 'monster') return baseAttacksOf(card).map(a => a.type);
+  if (card.kind === 'equip') return Object.keys(card.atk || {});
+  return [];
+}
+
 // レアリティ（最大レベルはカードの levels の行数で決まる）
 const RARITIES = {
   common: { name: 'コモン',     icon: '◆' },

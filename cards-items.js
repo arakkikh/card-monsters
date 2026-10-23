@@ -289,6 +289,48 @@ const EQUIP_DEFS = [
       { hp: 3, skills: [{ id: 'fallback', x: 1 }] },
       { hp: 3, armor: 1, skills: [{ id: 'fallback', x: 1 }] },
     ] },
+  // ---- 2種類の攻撃を足す装備（7個） ----
+  //   同じ種類の攻撃を持つモンスターには加算、持たない種類は攻撃が増える（攻撃の種類は本体と合わせて3つまで）
+  { id: 'e45', name: 'ルーンの魔剣', icon: '⚔️', color: null, rarity: 'rare', cost: 2,
+    levels: [
+      { atk: { melee: 1, magic: 1 } },
+      { atk: { melee: 1, magic: 1 }, hp: 1 },
+      { atk: { melee: 2, magic: 1 }, hp: 1 },
+    ] },
+  { id: 'e46', name: '双筒の弩', icon: '🎯', color: null, rarity: 'rare', cost: 2,
+    levels: [
+      { atk: { ranged: 1, chaos: 1 } },
+      { atk: { ranged: 2, chaos: 1 } },
+      { atk: { ranged: 2, chaos: 1 }, hp: 1 },
+    ] },
+  { id: 'e47', name: '炎の投げ槍', icon: '🔥', color: 'red', rarity: 'rare', cost: 2,
+    levels: [
+      { atk: { melee: 1, ranged: 1 } },
+      { atk: { melee: 2, ranged: 1 } },
+      { atk: { melee: 2, ranged: 1 }, hp: 1 },
+    ] },
+  { id: 'e48', name: '氷晶の杖剣', icon: '❄️', color: 'blue', rarity: 'rare', cost: 3,
+    levels: [
+      { atk: { magic: 2, melee: 1 } },
+      { atk: { magic: 2, melee: 1 }, armor: 1 },
+      { atk: { magic: 3, melee: 1 }, armor: 1 },
+    ] },
+  { id: 'e49', name: '天穹の長弓', icon: '🌈', color: 'yellow', rarity: 'epic', cost: 3,
+    levels: [
+      { atk: { ranged: 2, magic: 1 } },
+      { atk: { ranged: 3, magic: 1 } },
+    ] },
+  { id: 'e50', name: '混沌の短剣', icon: '🗡️', color: 'purple', rarity: 'epic', cost: 3,
+    levels: [
+      { atk: { melee: 1, chaos: 2 } },
+      { atk: { melee: 2, chaos: 2 } },
+    ] },
+  { id: 'e51', name: '森番の杖弓', icon: '🎋', color: 'green', rarity: 'common', cost: 2,
+    levels: [
+      { atk: { ranged: 1, magic: 1 } },
+      { atk: { ranged: 1, magic: 1 }, hp: 1 },
+      { atk: { ranged: 1, magic: 1 }, hp: 2 },
+    ] },
 ];
 
 // フラッシュカード（使い切り）

@@ -255,7 +255,7 @@ function puzzleRules(def) {
   const all = [...(def.me.field || []), ...(def.foe.field || []), ...(def.me.hand || []), ...(def.foe.hand || [])].filter(x => x)
     .flatMap(spec => { const o = typeof spec === 'string' ? { id: spec } : spec; const c = puzzleCard(o); return [c, o.item ? cardAt(o.item) : null]; }).filter(x => x);
   const has = id => all.some(c => (c.skills || []).some(k => k.id === id));
-  const type = t => all.some(c => c.type === t || (c.atk && typeof c.atk === 'object' && c.atk[t]));
+  const type = t => all.some(c => attackTypesOf(c).includes(t));
   const rules = ['遠隔攻撃のブロックは起きない'];
   if (has('flying')) rules.push(f.dodge ? 'Flying は、近接・遠隔攻撃を必ず回避する' : 'Flying は回避しない');
   if (type('chaos')) rules.push(`カオス攻撃のダメージは、${f.chaos ? `いつも${f.chaos}（攻撃力がそれより低ければ攻撃力）` : 'いつも最大値'}。対象は、相手の場の一番前`);

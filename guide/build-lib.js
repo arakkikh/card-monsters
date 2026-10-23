@@ -24,7 +24,7 @@ const pctBar = (v, max = 100) => `<span class="bar"><i style="width:${Math.max(0
 
 function cardArt(c) { return c.kind === 'monster' ? monsterArt(c) : itemArt(c); }
 function statsText(c) {
-  if (c.kind === 'monster') return `${ATTACK_TYPES[c.type].icon}${c.atk}　❤️${c.hp}${c.armor ? `　🛡️${c.armor}` : ''}`;
+  if (c.kind === 'monster') return `${baseAttacksOf(c).map(a => `${ATTACK_TYPES[a.type].icon}${a.atk}`).join(' ')}　❤️${c.hp}${c.armor ? `　🛡️${c.armor}` : ''}`;
   if (c.kind === 'flash') return skillsText(c.skills);
   const parts = [];
   for (const t in c.atk || {}) parts.push(`${ATTACK_TYPES[t].icon}+${c.atk[t]}`);
@@ -125,7 +125,7 @@ const GDECKS = SIM.b.decks.map((d, i) => {
   const level = Math.max(...Object.values(d.deck.levels));
   const mons = d.deck.monsters.map(id => cardAt(id, d.deck.levels[id]));
   const types = {};
-  mons.forEach(c => { types[c.type] = (types[c.type] || 0) + 1; });
+  mons.forEach(c => attackTypesOf(c).forEach(t => { types[t] = (types[t] || 0) + 1; })); // 2種類持つモンスターは両方に数える
   const all = [...d.deck.monsters, ...d.deck.items];
   const avg = Math.round(10 * all.reduce((n, id) => n + CARD_DEFS[id].cost, 0) / all.length) / 10;
   const colors = Object.keys(COLORS).filter(c => mons.some(m => m.color === c));

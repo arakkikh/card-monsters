@@ -375,7 +375,7 @@ function aiMakePlan(state, best, stats) {
     let why = null;
     if (a.type === 'monster') {
       const count = p.slots.filter(m => m).length;
-      const melee = c.type === 'melee' && !(c.skills || []).some(k => k.id === 'reach');
+      const melee = attackTypesOf(c).every(t => t === 'melee') && !(c.skills || []).some(k => k.id === 'reach'); // 近接しか持たない
       const front = foe.slots[0];
       const danger = front && AI_COUNTER_SKILLS.find(id => hasSkill(front, id));
       const caster = foe.slots.some(m => m && (getAttacks(m).some(x => x.type === 'magic') || skillX(m, 'heal') || skillX(m, 'groupheal')));

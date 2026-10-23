@@ -57,8 +57,10 @@ function dictRules() {
       desc: '場は3スロット。スロット1が前列（中央）、スロット2・3が後列（左・右）。モンスターは必ず前から詰めて並ぶ。モンスターがいるスロットに出すと、そこから後ろのモンスターを1つずつ後ろへ押し出す。前のモンスターがいなくなると、後ろのモンスターが前に詰める。' },
     { id: 'armor', name: 'アーマー', yomi: 'あーまー', icon: '🛡️', when: '物理ダメージを受けたとき', demo: 'shield', rel: ['skill:piercing', 'skill:enchantarmor', 'skill:corrosion', 'type:magic', 'type:ranged'],
       desc: `アーマーは盾のゲージ。物理ダメージ（近接・遠隔）は、まずアーマーを削る。カオス攻撃は固定ダメージで、アーマーを素通りする。アーマーが残っている間、HPは減らない。アーマーを壊したときの余りのダメージは消える（Piercing があればHPに届く）。魔法ダメージはアーマーを無視する。アーマーを持つモンスターは、遠隔攻撃を${Math.round(C.RANGED_BLOCK_CHANCE * 100)}%の確率でブロックする。` },
-    { id: 'order', name: '攻撃順', yomi: 'こうげきじゅん', icon: '🔁', when: '攻撃フェーズ', demo: 'many', rel: ['type:melee', 'type:ranged', 'type:magic', 'type:chaos', 'skill:batter', 'skill:craze'],
-      desc: 'ターン終了を押すと攻撃フェーズ。手番のプレイヤーのモンスターが、スロット3 → 2 → 1 の順に自動で攻撃する。1体が複数の攻撃を持つとき（装備で増えた攻撃など）は、魔法 → カオス → 遠隔 → 近接 の順。Batter・Craze の追加攻撃は、元の攻撃のすぐあとに行う。' },
+    { id: 'order', name: '攻撃順', yomi: 'こうげきじゅん', icon: '🔁', when: '攻撃フェーズ', demo: 'many', rel: ['type:melee', 'type:ranged', 'type:magic', 'type:chaos', 'skill:batter', 'skill:craze', 'rule:multi'],
+      desc: 'ターン終了を押すと攻撃フェーズ。手番のプレイヤーのモンスターが、スロット3 → 2 → 1 の順に自動で攻撃する。1体が複数の攻撃を持つとき（2種類の攻撃を持つモンスターや、装備で増えた攻撃など）は、魔法 → カオス → 遠隔 → 近接 の順。そのスロットで使えない攻撃はとばす。Batter・Craze の追加攻撃は、元の攻撃のすぐあとに行う。' },
+    { id: 'multi', name: '複数の攻撃', yomi: 'ふくすうのこうげき', icon: '🔀', when: '攻撃フェーズ', demo: 'many', rel: ['rule:order', 'type:melee', 'type:ranged', 'type:magic', 'type:chaos', 'skill:reach', 'skill:inspire', 'skill:shoot', 'skill:batter'],
+      desc: `モンスター本体は、最大2種類の攻撃を持てる（例：近接＋魔法）。攻撃は 魔法 → カオス → 遠隔 → 近接 の順で、そのスロットで使えない攻撃はとばす（近接＋魔法のモンスターが後列にいれば、魔法だけ攻撃する）。装備で同じ種類の攻撃を足すと、その攻撃力に加算。違う種類なら、攻撃が1つ増える。攻撃の種類は、本体と装備を合わせて${MAX_ATTACK_TYPES}つまで（超えた種類は使えない）。Inspire・Shoot Command・Demoralize・Suppress Magic などの強化・弱体は、対応する種類の攻撃にだけ効く。Batter・Craze などの追加攻撃も、対応する攻撃のあとにだけ入る。Swallow・Bloom・Leech など「すべての攻撃力」を上げる効果は、それぞれの攻撃に加わる。` },
     { id: 'sacrifice', name: '生贄', yomi: 'いけにえ', icon: '🔥', when: '自分のターン中（1ターンに1回）', demo: 'none', rel: ['rule:crystal', 'rule:fallen', 'rule:win'],
       desc: `1ターンに1回、カードを生贄にしてクリスタルに換えられる。手札のアイテムは+${C.SACRIFICE_ITEM}、手札のモンスターは+${C.SACRIFICE_MONSTER}、場のモンスターは+${C.SACRIFICE_MONSTER}（装備も失う）。生贄にしたカードは試合から取り除かれる。` },
     { id: 'fallen', name: '倒されたときのクリスタル', yomi: 'たおされたときのくりすたる', icon: '💠', when: '場のモンスターが倒されたとき', demo: 'none', rel: ['rule:crystal', 'rule:sacrifice', 'hero:spoils'],
@@ -139,6 +141,12 @@ DICT.forEach(e => { e.rel = e.rel.filter(r => DICT_BY_KEY[r]); });
 function dictCards(entry) {
   if (entry.group === 'hero') return entry.hero ? [{ id: HERO_BY_ID[entry.hero].card, opt: false }] : [];
   if (entry.group === 'event') return [{ id: EVENTS.find(e => e.id === entry.id).elite, opt: false }];
+  // 攻撃タイプ・「複数の攻撃」：2種類以上の攻撃を持つカード（モンスター本体の2種類、装備で足す2種類）
+  if (entry.group === 'type' || entry.key === 'rule:multi') {
+    return Object.values(CARD_DEFS).filter(def => def.kind !== 'flash' && !def.elite)
+      .map(def => cardAt(def.id)).filter(c => attackTypesOf(c).length > 1 && (entry.group !== 'type' || attackTypesOf(c).includes(entry.id)))
+      .map(c => ({ id: c.id, opt: false, tag: '2種類の攻撃' }));
+  }
   if (entry.group !== 'skill' && entry.group !== 'status') return [];
   const out = [];
   for (const def of Object.values(CARD_DEFS)) {

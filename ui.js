@@ -39,8 +39,8 @@ function colorName(color) { return color ? COLORS[color].name : '無色'; }
 function cardDetail(card) {
   const skills = (card.skills || []).map(k => `${SKILLS[k.id].icon}${skillLabel(k)}`).join(' ');
   if (card.kind === 'monster') {
-    const t = ATTACK_TYPES[card.type];
-    return `<b>${card.name}</b>（${colorName(card.color)}）💎${card.cost}　${t.icon}${t.name}${card.atk}　❤️${card.hp}　${skills}`;
+    const atks = baseAttacksOf(card).map(a => `${ATTACK_TYPES[a.type].icon}${ATTACK_TYPES[a.type].name}${a.atk}`).join('・');
+    return `<b>${card.name}</b>（${colorName(card.color)}）💎${card.cost}　${atks}　❤️${card.hp}　${skills}`;
   }
   if (card.kind === 'flash') {
     const text = card.skills.map(k => `${SKILLS[k.id].icon}${skillLabel(k)}：${SKILLS[k.id].desc(k.x)}`).join(' / ');
@@ -185,10 +185,12 @@ function updateHpBar(mon) {
 }
 
 function monHtml(mon, slot) {
-  const atks = getAttacks(mon);
+  // 攻撃は、攻撃の順番（魔法 → カオス → 遠隔 → 近接）で並べる。今のスロットで使えないものは薄く
+  const atks = getAttacks(mon).sort((x, y) => ATTACK_ORDER.indexOf(x.type) - ATTACK_ORDER.indexOf(y.type));
   const usable = a => canUseType(mon, a.type, slot) && !(a.type === 'magic' && mon.status.silence) && a.atk > 0;
+  const chipTitle = a => `${ATTACK_TYPES[a.type].name}${a.atk}：${usable(a) ? 'この位置で攻撃する' : !canUseType(mon, a.type, slot) ? 'この位置では使えない' : '今は使えない'}`;
   const chips = atks.map(a =>
-    `<span class="chip${usable(a) ? '' : ' off'}${a.atk > a.base && a.base ? ' up' : a.atk < a.base ? ' down' : ''}">${typeIcon(a.type)}${a.atk}</span>`).join('');
+    `<span class="chip${usable(a) ? '' : ' off'}${a.atk > a.base && a.base ? ' up' : a.atk < a.base ? ' down' : ''}" title="${chipTitle(a)}">${typeIcon(a.type)}${a.atk}</span>`).join('');
   const idle = mon.status.entangle || !atks.some(usable);
   const armor = getArmor(mon);
   // 数字（攻撃力・HP・アーマー）は、カードの下部に大きくまとめる。HPは一番大きく、最大なら白・減っていれば赤。
@@ -251,7 +253,9 @@ const typeIcon = type => ICON[type] || '';
 // カード下部のステータス（アイコン＋数字）
 function cardStatsHtml(c) {
   if (c.kind === 'monster') {
-    return `<span class="st">${typeIcon(c.type)}${c.atk}</span><span class="st">${ICON.heart}${c.hp}</span>${c.armor ? `<span class="st">${ICON.shield}${c.armor}</span>` : ''}`;
+    // 攻撃は種類ごとにアイコンと数字を並べる（2種類持つモンスターは2つ）
+    const atks = baseAttacksOf(c).map(a => `<span class="st">${typeIcon(a.type)}${a.atk}</span>`).join('');
+    return `${atks}<span class="st">${ICON.heart}${c.hp}</span>${c.armor ? `<span class="st">${ICON.shield}${c.armor}</span>` : ''}`;
   }
   if (c.kind === 'flash') return `<span class="st text">${skillsShort(c)}</span>`;
   const parts = [];
@@ -300,7 +304,8 @@ function levelTableHtml(card) {
         const o = oldSkill(k);
         return prev && (o.id !== k.id || o.x !== k.x) ? `<span class="up">${text}</span>` : text;
       }).join(' ');
-      stat = `${cell(c.hp, prev && prev.hp, `❤️${c.hp}`)} ${cell(c.atk, prev && prev.atk, `${ATTACK_TYPES[c.type].icon}${c.atk}`)}`
+      const atks = baseAttacksOf(c).map((a, k) => cell(a.atk, prev && baseAttacksOf(prev)[k].atk, `${ATTACK_TYPES[a.type].icon}${a.atk}`)).join(' ');
+      stat = `${cell(c.hp, prev && prev.hp, `❤️${c.hp}`)} ${atks}`
         + `${c.armor ? ` ${cell(c.armor, prev && prev.armor, `🛡️${c.armor}`)}` : ''} ${skills}`;
     } else {
       const text = `${itemText(c)}${c.cost !== def.cost ? ` 💎${c.cost}` : ''}`;
@@ -1545,6 +1550,7 @@ function equipLines(item) {
   for (const t in (item.atk || {})) {
     lines.push(`<li>${ATTACK_TYPES[t].icon}<b>${ATTACK_TYPES[t].name}攻撃 +${item.atk[t]}</b>：${ATTACK_TYPES[t].name}攻撃を持たないモンスターには、${ATTACK_TYPES[t].name}攻撃${item.atk[t]}を追加する</li>`);
   }
+  if (Object.keys(item.atk || {}).length > 1) lines.push(`<li>🔢 攻撃の種類は、モンスター本体と合わせて${MAX_ATTACK_TYPES}つまで。超えた種類の攻撃は使えない</li>`);
   if (item.armor) lines.push(`<li>🛡️<b>アーマー +${item.armor}</b>：物理ダメージを肩代わりする盾ゲージ（魔法は防げない）</li>`);
   if (item.hp) lines.push(`<li>❤️<b>体力 +${item.hp}</b></li>`);
   return lines.concat(skillLines(item.skills));
@@ -1579,10 +1585,14 @@ function optionNoteHtml(card, free = optionsFreeNow()) {
 function cardTipHtml(card, opts = {}) {
   const optNote = optionNoteHtml(card, opts.free == null ? undefined : opts.free);
   if (card.kind === 'monster') {
-    const t = ATTACK_TYPES[card.type];
+    const base = baseAttacksOf(card);
+    const atkText = base.map(a => `${ATTACK_TYPES[a.type].icon}${ATTACK_TYPES[a.type].name} <b>${a.atk}</b>`).join('　');
+    const places = base.map(a => `<li>${ATTACK_TYPES[a.type].icon}${ATTACK_TYPES[a.type].name}：${TYPE_PLACE[a.type]}</li>`).join('');
+    const multi = base.length > 1 ? `<div class="tip-note">2種類の攻撃を持つ。そのスロットで使える攻撃だけを、${ATTACK_ORDER.filter(t => base.some(a => a.type === t)).map(t => ATTACK_TYPES[t].name).join(' → ')} の順に行う（使えない攻撃はとばす）。</div>` : '';
     return `${tipHead(card, `モンスター・${colorName(card.color)}`)}
-      <div class="tip-row">❤️ HP <b>${card.hp}</b>　${t.icon}${t.name} <b>${card.atk}</b>${card.armor ? `　🛡️ アーマー <b>${card.armor}</b>` : ''}</div>
-      <ul><li>${t.icon}${t.name}：${TYPE_PLACE[card.type]}</li>${skillLines(card.skills).join('')}</ul>
+      <div class="tip-row">❤️ HP <b>${card.hp}</b>　${atkText}${card.armor ? `　🛡️ アーマー <b>${card.armor}</b>` : ''}</div>
+      <ul>${places}${skillLines(card.skills).join('')}</ul>
+      ${multi}
       ${optNote}
       ${levelTableHtml(card)}`;
   }
@@ -1613,7 +1623,8 @@ function monTipHtml(mon, slot, owner) {
   const item = mon.item;
   const hpNote = item && item.hp ? `<span class="up">（${item.name} +${item.hp}）</span>` : '';
   // 攻撃タイプごとの攻撃力。変化している値は「元 → 今（理由）」を色付きで出す
-  const atkRows = getAttacks(mon).map(a => {
+  // 攻撃の順番（魔法 → カオス → 遠隔 → 近接）で並べ、今のスロットで使えないものは理由を出す
+  const atkRows = getAttacks(mon).sort((x, y) => ATTACK_ORDER.indexOf(x.type) - ATTACK_ORDER.indexOf(y.type)).map(a => {
     const t = ATTACK_TYPES[a.type];
     let value = `<b>${a.atk}</b>`;
     if (a.mods.length) {
@@ -1625,8 +1636,11 @@ function monTipHtml(mon, slot, owner) {
     if (!canUseType(mon, a.type, slot)) block = `🚫 この位置では${t.name}攻撃できません`;
     else if (a.type === 'magic' && mon.status.silence) block = '🔇 Silenceで魔法攻撃できません';
     else if (a.atk <= 0) block = '🚫 攻撃力が0のため攻撃できません';
-    return `<li class="${block ? 'off' : ''}">${t.icon}${t.name} ${value}${block ? `<br><span class="down">${block}</span>` : ''}</li>`;
+    return `<li class="${block ? 'off' : ''}">${t.icon}${t.name} ${value}${block ? `<br><span class="down">${block}</span>` : '<br><span class="up">✅ この位置で攻撃する</span>'}</li>`;
   });
+  for (const x of cappedWeaponAttacks(c, item)) {
+    atkRows.push(`<li class="off">${ATTACK_TYPES[x.type].icon}${ATTACK_TYPES[x.type].name} ${x.atk}<br><span class="down">🚫 攻撃の種類が上限（${MAX_ATTACK_TYPES}つ）を超えるため使えません（${item.name}）</span></li>`);
+  }
   const skills = skillLines(c.skills);
   const status = statusList(mon).map(x => {
     const info = statusInfo(x);
