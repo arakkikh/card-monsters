@@ -2,6 +2,15 @@
 //   マス：命が少なければ祠・鍛冶屋を優先、そうでなければ戦闘を優先。カード：レアリティの高いものを取る
 // ダンジョンの大量挑戦。オート（つよい）＋かんたんな選択方針
 const rk = id => RARITY_ORDER.indexOf(CARD_DEFS[id].rarity);
+// 選択スキルの選び方：'random' 候補からランダム（CPUのデッキと同じ）/ 'first' いつも1番目 / 'none' 選ばない（変更前と同じ）
+let DG_OPT_POLICY = 'random';
+function pickOptions(run, rng) {
+  let id;
+  while ((id = runOptionAsk(run))) {
+    if (DG_OPT_POLICY === 'none') runSkipOption(run, id);
+    else runSetOption(run, id, DG_OPT_POLICY === 'first' ? 0 : Math.floor(rng() * CARD_DEFS[id].options.length));
+  }
+}
 function playBattle(run, rng, brain) {
   const foe = run.pending.foe;
   const s = newGame(runDeckForBattle(run), foe.deck, rng, { terrain: foe.terrain, charms: runBattleCharms(run) });
@@ -31,6 +40,7 @@ function playRun(profile, hero, trial, seed, brain, rng) {
   const run = startDungeon(profile, hero, 0, trial, seed);
   let guard = 0;
   while (!run.over && guard++ < 2000) {
+    pickOptions(run, rng);
     if (!run.pending) {
       const opts = dungeonChoices(run).map(id => run.map.nodes[id]);
       const pref = run.lives <= 1 ? ['shrine', 'smith', 'mystery', 'shop', 'battle', 'elite', 'boss'] : ['battle', 'elite', 'smith', 'mystery', 'shop', 'shrine', 'boss'];

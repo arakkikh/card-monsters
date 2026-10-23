@@ -129,7 +129,15 @@ function sanitizeDungeonData(d) {
   if (d.lastClear && okDeck(d.lastClear.deck) && HERO_BY_ID[d.lastClear.hero]) out.lastClear = d.lastClear;
   const r = d.run;
   if (r && typeof r === 'object' && okDeck(r.deck) && HERO_BY_ID[r.hero] && r.map && Array.isArray(r.map.nodes) && r.map.nodes.length
-      && Array.isArray(r.charms) && r.charms.every(id => CHARM_BY_ID[id]) && Number.isFinite(r.seed) && r.lives > 0 && !r.over) out.run = r;
+      && Array.isArray(r.charms) && r.charms.every(id => CHARM_BY_ID[id]) && Number.isFinite(r.seed) && r.lives > 0 && !r.over) {
+    out.run = r;
+    // 選択スキル（古いセーブにはない）：デッキにないカード・候補にない番号は捨てる
+    const has = id => [...r.deck.monsters, ...r.deck.items].includes(id) && CARD_DEFS[id].options;
+    const opts = r.deck.options && typeof r.deck.options === 'object' ? r.deck.options : {};
+    r.deck.options = {};
+    for (const id in opts) if (has(id) && Number.isInteger(opts[id]) && CARD_DEFS[id].options[opts[id]]) r.deck.options[id] = opts[id];
+    if (r.optAsk != null) r.optAsk = Array.isArray(r.optAsk) ? r.optAsk.filter(id => has(id) && r.deck.options[id] == null) : [];
+  }
   return out;
 }
 
@@ -211,6 +219,46 @@ const runCanHold = (run, id) => run.deck[runKey(id)].filter(x => x === id).lengt
 // そのカードの枠（モンスター8・アイテム8）がいっぱいか
 const runFull = (run, id) => run.deck[runKey(id)].length >= runMax(id);
 
+// ---------- 選択スキル（ダンジョンの中だけ） ----------
+//   ダンジョンのカードはLv1から始まるので、レベルの条件なしで最初から選べる。
+//   選んだものは run.deck.options（{ カードid: 番号 }）に入り、通常のコレクションの選択（profile.options）とは別。
+//   カードを手に入れたとき、まだ選んでいなければ run.optAsk（選ぶのを待っているカードid の列）に積む。画面はその場で選ばせる。
+
+const runHasOptions = id => !!(CARD_DEFS[id] && CARD_DEFS[id].options);
+const runOption = (run, id) => { const o = (run.deck.options || {})[id]; return o == null ? null : o; };
+// 選ぶのを待っているカード（なければ null）
+const runOptionAsk = run => (run.optAsk && run.optAsk.length ? run.optAsk[0] : null);
+
+// 選択スキルを選ぶ（いつでも無料で変えられる）。index に null を渡すと「なし」に戻す
+function runSetOption(run, id, index) {
+  if (!runCards(run).includes(id) || !runHasOptions(id)) return false;
+  if (index !== null && !CARD_DEFS[id].options[index]) return false;
+  run.deck.options = run.deck.options || {};
+  if (index === null) delete run.deck.options[id];
+  else run.deck.options[id] = index;
+  runSkipOption(run, id);
+  return true;
+}
+// 今は選ばない（あとでデッキ確認画面から選べる）
+function runSkipOption(run, id) {
+  if (run.optAsk) run.optAsk = run.optAsk.filter(x => x !== id);
+}
+
+// 手に入れたカードが選択スキルを持っていて、まだ選んでいなければ、選ぶのを待つ列に積む
+function runAskOption(run, id) {
+  if (!runHasOptions(id) || runOption(run, id) !== null) return;
+  run.optAsk = run.optAsk || [];
+  if (!run.optAsk.includes(id)) run.optAsk.push(id);
+}
+
+// デッキから最後の1枚がなくなったカードの、レベルアップと選択スキルを消す
+function runForget(run, id) {
+  if (runCards(run).includes(id)) return;
+  delete run.deck.levels[id];
+  if (run.deck.options) delete run.deck.options[id];
+  runSkipOption(run, id);
+}
+
 // カードを加える。枠がいっぱいのときは replace（入れ替えるカードの位置）が必要。加えられたら true
 function runAddCard(run, id, replace) {
   if (!CARD_DEFS[id] || CARD_DEFS[id].elite) return false;
@@ -220,11 +268,13 @@ function runAddCard(run, id, replace) {
     const old = list[replace];
     if (old !== id && !runCanHold(run, id)) return false;
     list.splice(replace, 1, id);
-    if (!list.includes(old)) delete run.deck.levels[old]; // 外したカードのレベルアップは消える
+    runForget(run, old); // 外したカードのレベルアップと選択スキルは消える
+    runAskOption(run, id);
     return true;
   }
   if (!runCanHold(run, id)) return false;
   list.push(id);
+  runAskOption(run, id);
   return true;
 }
 
@@ -234,7 +284,7 @@ function runRemoveCard(run, key, index) {
   if (!list || !(index >= 0 && index < list.length)) return false;
   if (key === 'monsters' && list.length <= 1) return false;
   const [old] = list.splice(index, 1);
-  if (!list.includes(old)) delete run.deck.levels[old];
+  runForget(run, old);
   return true;
 }
 
@@ -251,7 +301,10 @@ function runDeckForBattle(run) {
   const hero = HERO_BY_ID[run.hero];
   const levels = {};
   runCards(run).forEach(id => { levels[id] = runLevel(run, id); });
-  return { monsters: run.deck.monsters.slice(), items: run.deck.items.slice(), levels, options: {}, hero: { id: hero.id, name: hero.name, skill: hero.skills[run.skill].id } };
+  // 選択スキルはダンジョンの中で選んだもの（レベルの条件なし）。手持ちのコレクションの選択は使わない
+  const options = {};
+  runCards(run).forEach(id => { if (runOption(run, id) !== null) options[id] = runOption(run, id); });
+  return { monsters: run.deck.monsters.slice(), items: run.deck.items.slice(), levels, options, freeOptions: true, hero: { id: hero.id, name: hero.name, skill: hero.skills[run.skill].id } };
 }
 
 const dungeonPool = () => [...MONSTERS, ...ITEMS].filter(c => !c.elite);
@@ -267,7 +320,7 @@ function startDeck(heroId, rng) {
   monsters.push(shuffle(commons.filter(c => c.color !== color && c.cost <= CONFIG.CRYSTALS_PER_TURN), rng)[0]);
   const items = ITEMS.filter(c => c.rarity === 'common' && (!c.color || c.color === color));
   const equips = shuffle(items.filter(c => c.kind === 'equip'), rng), flashes = shuffle(items.filter(c => c.kind === 'flash'), rng);
-  return { monsters: monsters.map(c => c.id), items: [equips[0], equips[1], flashes[0], flashes[1]].map(c => c.id), levels: {} };
+  return { monsters: monsters.map(c => c.id), items: [equips[0], equips[1], flashes[0], flashes[1]].map(c => c.id), levels: {}, options: {} };
 }
 
 // 報酬や商人に並ぶカードの候補（n枚。重複なし）。minRarity: これ以上のレアリティだけ
@@ -571,7 +624,8 @@ const DUNGEON_EVENTS = [
         const fresh = pickOne(pool, rng);
         const list = run.deck[runKey(old)];
         list.splice(list.indexOf(old), 1, fresh.id);
-        if (!list.includes(old)) delete run.deck.levels[old];
+        runForget(run, old);
+        runAskOption(run, fresh.id);
         return `${CARD_DEFS[old].name}が、${fresh.name}に変わった。`;
       } },
       { text: '立ち去る', run: () => '鏡は静かに曇っていった。' },
@@ -630,7 +684,7 @@ function endDungeon(profile, reason, now = new Date()) {
   let unlocked = null;
   if (clear) {
     d.clears++;
-    d.lastClear = { hero: run.hero, skill: run.skill, trial: run.trial, t: now.getTime(), charms: run.charms.slice(), deck: { monsters: run.deck.monsters.slice(), items: run.deck.items.slice(), levels: { ...run.deck.levels } } };
+    d.lastClear = { hero: run.hero, skill: run.skill, trial: run.trial, t: now.getTime(), charms: run.charms.slice(), deck: { monsters: run.deck.monsters.slice(), items: run.deck.items.slice(), levels: { ...run.deck.levels }, options: { ...(run.deck.options || {}) } } };
     if (run.trial >= d.maxTrial && d.maxTrial < DUNGEON.MAX_TRIAL) { d.maxTrial = run.trial + 1; unlocked = d.maxTrial; }
   }
   d.run = null;

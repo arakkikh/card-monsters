@@ -1561,23 +1561,29 @@ function variantNoteHtml(card) {
   return `<div class="tip-note">色付き版：${colored.map(d => `${COLORS[d.color].name}「${d.name}」コスト${d.cost}`).join('、')}</div>`;
 }
 
+// ダンジョンの対戦中か（ダンジョンのカードは、選択スキルにレベルの条件がない）
+const optionsFreeNow = () => !!(state && !state.result && battleMode.type === 'dungeon');
+
 // 選択スキルの候補（選んでいるものに印。解放レベル未満なら、その旨を出す）
-function optionNoteHtml(card) {
+//   free: ダンジョンのカード（レベルの条件なし。ダンジョンのデッキ確認画面で選ぶ）
+function optionNoteHtml(card, free = optionsFreeNow()) {
   if (!card.options) return '';
-  const open = optionAvailable(card.id, card.level);
+  const open = free || optionAvailable(card.id, card.level);
   const list = card.options.map((k, i) =>
-    `<li class="${card.option === i ? 'opt-skill' : 'dim'}">${card.option === i ? '◉' : '○'} ${SKILLS[k.id].icon}<b>${skillLabel(k)}</b></li>`).join('');
-  return `<div class="tip-sub">選択スキルの候補${open ? '（コレクションで1つ選べる）' : `（カードLv${card.optionLevel}で解放）`}</div><ul>${list}</ul>`;
+    `<li class="${card.option === i ? 'opt-skill' : 'dim'}">${card.option === i ? '◉' : '○'} ${SKILLS[k.id].icon}<b>${skillLabel(k)}</b>：${SKILLS[k.id].desc(k.x)}</li>`).join('');
+  const how = free ? '（ダンジョンでは最初から選べる。デッキ確認画面でいつでも変更）' : open ? '（コレクションで1つ選べる）' : `（カードLv${card.optionLevel}で解放）`;
+  return `<div class="tip-sub">選択スキルの候補${how}</div><ul>${list}</ul>`;
 }
 
-// 手札・デッキ編集のカード
-function cardTipHtml(card) {
+// 手札・デッキ編集のカード。opts.free: ダンジョンのカード（選択スキルにレベルの条件がない）
+function cardTipHtml(card, opts = {}) {
+  const optNote = optionNoteHtml(card, opts.free == null ? undefined : opts.free);
   if (card.kind === 'monster') {
     const t = ATTACK_TYPES[card.type];
     return `${tipHead(card, `モンスター・${colorName(card.color)}`)}
       <div class="tip-row">❤️ HP <b>${card.hp}</b>　${t.icon}${t.name} <b>${card.atk}</b>${card.armor ? `　🛡️ アーマー <b>${card.armor}</b>` : ''}</div>
       <ul><li>${t.icon}${t.name}：${TYPE_PLACE[card.type]}</li>${skillLines(card.skills).join('')}</ul>
-      ${optionNoteHtml(card)}
+      ${optNote}
       ${levelTableHtml(card)}`;
   }
   if (card.kind === 'equip') {
@@ -1585,7 +1591,7 @@ function cardTipHtml(card) {
     return `${tipHead(card, `装備・${colorName(card.color)}`)}
       <ul>${equipLines(card).join('')}</ul>
       <div class="tip-row">装備できる色：<b>${who}</b></div>
-      ${optionNoteHtml(card)}
+      ${optNote}
       ${variantNoteHtml(card)}
       ${levelTableHtml(card)}
       <div class="tip-note">1体につき1個。付け替えると古い装備は捨て札。</div>`;
@@ -1647,7 +1653,9 @@ let tipRef = null;
 function tipRefOf(el) {
   if (el.classList.contains('mon')) return { type: 'mon', key: Number(el.dataset.uid) };
   if (el.dataset.uid) return { type: 'hand', key: Number(el.dataset.uid) };
-  return { type: 'deck', key: el.dataset.id, lv: Number(el.dataset.lv) || 0 }; // lv: ダンジョンなど、手持ちとは別のレベルで見せるとき
+  // lv: ダンジョンなど、手持ちとは別のレベルで見せるとき。op・free: ダンジョンの選択スキル（レベルの条件なし）
+  const op = el.dataset.op != null && el.dataset.op !== '' ? Number(el.dataset.op) : null;
+  return { type: 'deck', key: el.dataset.id, lv: Number(el.dataset.lv) || 0, op, free: el.dataset.free === '1' };
 }
 
 function tipElOf(ref) {
@@ -1658,7 +1666,11 @@ function tipElOf(ref) {
 }
 
 function tipHtmlOf(ref) {
-  if (ref.type === 'deck') return CARD_DEFS[ref.key] ? cardTipHtml(ref.lv ? cardAt(ref.key, ref.lv) : ownedCard(profile, ref.key)) : null;
+  if (ref.type === 'deck') {
+    if (!CARD_DEFS[ref.key]) return null;
+    if (ref.free) return cardTipHtml(cardAt(ref.key, ref.lv || 1, ref.op, true), { free: true });
+    return cardTipHtml(ref.lv ? cardAt(ref.key, ref.lv) : ownedCard(profile, ref.key));
+  }
   if (!state) return null;
   if (ref.type === 'hand') {
     const h = state.players[0].hand.find(c => c.uid === ref.key);

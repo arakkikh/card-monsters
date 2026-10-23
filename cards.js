@@ -41,11 +41,13 @@ function maxLevel(id) { return CARD_DEFS[id].levels.length; }
 // ゲーム中はこの形のカードを使う（card.hp / card.atk / card.skills / card.level …）
 //   option: 選択スキルの番号（def.options の何番目か）。カードレベルが optionLevel 以上のときだけ有効で、
 //           選んだスキルは skills の最後に { …, opt: true } として加わる
+//   anyLevel: true ならレベルに関係なく選択スキルを有効にする（ダンジョン：カードがLv1から始まるため）
 const cardCache = {};
-function cardAt(id, level = 1, option = null) {
+function cardAt(id, level = 1, option = null, anyLevel = false) {
   const def = CARD_DEFS[id];
   const lv = Math.max(1, Math.min(level, def.levels.length));
-  const opt = optionAvailable(id, lv) && option != null && def.options[option] ? option : null;
+  const open = anyLevel ? !!def.options : optionAvailable(id, lv);
+  const opt = open && option != null && def.options[option] ? option : null;
   const key = id + '@' + lv + (opt === null ? '' : '#' + opt);
   if (!cardCache[key]) {
     const { levels, ...base } = def;

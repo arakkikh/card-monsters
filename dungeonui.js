@@ -8,8 +8,39 @@ let dgReplace = null;                            // 枠がいっぱいのとき�
 
 const dgRun = () => profile.dungeon.run;
 const dgSave = () => { saveProfile(profile); };
-const dgCard = (run, id) => cardAt(id, run ? runLevel(run, id) : 1);
-const dgCardHtml = (run, id, attrs = '', extra = '') => cardFaceHtml(dgCard(run, id), { attrs: `data-id="${id}" data-lv="${run ? runLevel(run, id) : 1}" ${attrs}`, extra });
+// ダンジョンのカード：ダンジョンの中のレベルと選択スキル（レベルの条件なし）で見せる
+const dgCard = (run, id) => cardAt(id, run ? runLevel(run, id) : 1, run ? runOption(run, id) : null, true);
+const dgCardHtml = (run, id, attrs = '', extra = '') => {
+  const op = run ? runOption(run, id) : null;
+  return cardFaceHtml(dgCard(run, id), { attrs: `data-id="${id}" data-lv="${run ? runLevel(run, id) : 1}" data-op="${op == null ? '' : op}" data-free="1" ${attrs}`, extra });
+};
+// 選択スキルを持つカードの印（報酬・商人の候補で使う）
+const dgOptBadge = id => (runHasOptions(id) ? '<span class="card-own opt">✦選択スキル</span>' : '');
+// 候補のカードのうち、選択スキルを持つものの候補スキルの一覧
+function dgOptListHtml(ids) {
+  const list = [...new Set(ids)].filter(runHasOptions).map(id => {
+    const skills = CARD_DEFS[id].options.map(k => `${SKILLS[k.id].icon}${skillLabel(k)}`).join(' ／ ');
+    return `<li><b>✦ ${CARD_DEFS[id].name}</b>：${skills}</li>`;
+  }).join('');
+  return list ? `<ul class="dg-optlist">${list}</ul><p class="dk-hint">✦の付いたカードは選択スキルを持っています。手に入れたとき、候補から1つ選べます（長押し・カーソルで説明）。</p>` : '';
+}
+// 選択スキルを選ぶボタン（選んでいるものに印）。act: data-dg の値
+function dgOptButtonsHtml(run, id, act) {
+  const now = runOption(run, id);
+  const btn = (k, i) => `<button class="btn opt-btn${now === i ? ' on' : ''}" data-dg="${act}" data-card="${id}" data-index="${i}">
+    ${SKILLS[k.id].icon} <b>${skillLabel(k)}</b><br><small>${SKILLS[k.id].desc(k.x)}</small></button>`;
+  return CARD_DEFS[id].options.map(btn).join('');
+}
+// カードを手に入れたとき：その場で選択スキルを選ぶ
+function optPromptHtml(run) {
+  const id = runOptionAsk(run);
+  return `<p class="lvup">✦ 選択スキルを選ぶ</p>
+    <div class="deck-grid dg-offers">${dgCardHtml(run, id, 'disabled')}</div>
+    <p>手に入れた<b>${CARD_DEFS[id].name}</b>は選択スキルを持っています。1つ選ぶと、基本のスキルに加えて、そのスキルでも戦います。</p>
+    <div class="opt-box">${dgOptButtonsHtml(run, id, 'opt')}</div>
+    <p class="dk-hint">選んだスキルはダンジョンの中だけで有効です（コレクションの選択とは別）。デッキ確認画面から、いつでも変えられます。</p>
+    <button class="btn big dg-go" data-dg="opt-later" data-card="${id}">あとで選ぶ（今は「なし」）</button>`;
+}
 const charmChipHtml = (id, attrs = '') => `<span class="charm" ${attrs} data-charm="${id}" title="${CHARM_BY_ID[id].name}：${CHARM_BY_ID[id].desc}">${CHARM_BY_ID[id].icon}</span>`;
 const livesHtml = run => '❤️'.repeat(run.lives) + '🖤'.repeat(Math.max(0, run.maxLives - run.lives));
 
@@ -51,7 +82,7 @@ function renderDungeonStart() {
       <p>全${DUNGEON.CHAPTERS}章のダンジョンを、<b>ダンジョンの中だけのデッキ</b>で進みます。手持ちのカードは使いません。最初はモンスター${DUNGEON.START_MONSTERS}枚＋アイテム${DUNGEON.START_ITEMS}枚で、勝つたびにカードが増えます。</p>
       <p>命は${DUNGEON.LIVES}つ。戦闘に負けると1つ減り、0になると終わりです。終わったときに、進んだマスの数に応じてゴールドと魔石を持ち帰れます（カードは持ち帰れません）。</p>
       <p class="dg-record">最高記録：${d.best.floor ? `${d.best.floor} / ${DUNGEON.CHAPTERS * DUNGEON.ROWS} マス${d.best.cleared ? '（クリア）' : ''}${d.best.trial ? `・試練${d.best.trial}` : ''}` : 'なし'}　クリア ${d.clears}回</p>
-      ${last ? `<details class="dg-last"><summary>前回クリアしたデッキ（${HERO_BY_ID[last.hero].name}${last.trial ? `・試練${last.trial}` : ''}）</summary><div class="deck-grid">${[...last.deck.monsters, ...last.deck.items].map(id => cardFaceHtml(cardAt(id, last.deck.levels[id] || 1), { attrs: `data-id="${id}" data-lv="${last.deck.levels[id] || 1}"` })).join('')}</div><div class="charm-row">${last.charms.map(c => charmChipHtml(c)).join('')}</div></details>` : ''}
+      ${last ? `<details class="dg-last"><summary>前回クリアしたデッキ（${HERO_BY_ID[last.hero].name}${last.trial ? `・試練${last.trial}` : ''}）</summary><div class="deck-grid">${[...last.deck.monsters, ...last.deck.items].map(id => { const op = (last.deck.options || {})[id]; return cardFaceHtml(cardAt(id, last.deck.levels[id] || 1, op, true), { attrs: `data-id="${id}" data-lv="${last.deck.levels[id] || 1}" data-op="${op == null ? '' : op}" data-free="1"` }); }).join('')}</div><div class="charm-row">${last.charms.map(c => charmChipHtml(c)).join('')}</div></details>` : ''}
     </div>
     <h2>難しさ</h2>
     <div class="dg-panel"><div class="chip-row">${trials}</div>${d.maxTrial ? trialNote : '<p class="dk-hint">クリアすると「試練」（より難しい挑戦）が解放されます。</p>'}</div>
@@ -129,6 +160,7 @@ function nodeHtml(run) {
   const head = `<div class="dg-panel dg-node-panel"><div class="result-icon">${t.icon}</div><h2>${t.name}</h2>`;
   const leave = text => `<button class="btn big dg-go" data-dg="leave">${text}</button>`;
   if (dgReplace) return head + replaceHtml(run) + '</div>';
+  if (runOptionAsk(run)) return head + optPromptHtml(run) + '</div>';
   if (p.phase === 'battle') {
     return `${head}${foeHtml(run, p.foe)}<p class="dk-hint">負けると命が1つ減ります（今 ${run.lives}）。</p>
       <button class="btn primary big dg-go" data-dg="fight">戦う</button></div>`;
@@ -144,9 +176,10 @@ function nodeHtml(run) {
   if (step) {
     const title = p.type === 'mystery' && p.result ? `<p>${p.result}</p>` : p.phase === 'reward' ? '<p class="lvup">勝利！</p>' : '';
     if (step.kind === 'card') {
-      const cards = step.offers.map(id => dgCardHtml(run, id, `data-dg="take" data-card="${id}"`, runFull(run, id) ? '<span class="card-miss">入れ替え</span>' : '')).join('');
+      const cards = step.offers.map(id => dgCardHtml(run, id, `data-dg="take" data-card="${id}"`, (runFull(run, id) ? '<span class="card-miss">入れ替え</span>' : '') + dgOptBadge(id))).join('');
       return `${head}${title}${notes}<p>カードを1枚選んで、デッキに加えます（長押し・カーソルで説明）。</p>
         <div class="deck-grid dg-offers">${cards || '<p>選べるカードがありません</p>'}</div>
+        ${dgOptListHtml(step.offers)}
         <p class="dk-hint">今のデッキ：モンスター${run.deck.monsters.length}/${CONFIG.DECK_MONSTERS}・アイテム${run.deck.items.length}/${CONFIG.DECK_ITEMS}。枠がいっぱいの種類は、入れ替えになります。</p>
         <button class="btn big dg-go" data-dg="pass">取らない</button></div>`;
     }
@@ -174,10 +207,11 @@ function nodeHtml(run) {
     const rows = p.stock.map((it, i) => {
       const price = shopPrice(run, it);
       const can = !it.sold && run.coins >= price && (it.kind === 'charm' ? !run.charms.includes(it.id) : runCanHold(run, it.id));
-      const body = it.kind === 'card' ? dgCardHtml(run, it.id) : `<span class="dg-shop-charm">${CHARM_BY_ID[it.id].icon}<b>${CHARM_BY_ID[it.id].name}</b><small>${CHARM_BY_ID[it.id].desc}</small></span>`;
+      const body = it.kind === 'card' ? dgCardHtml(run, it.id, '', dgOptBadge(it.id)) : `<span class="dg-shop-charm">${CHARM_BY_ID[it.id].icon}<b>${CHARM_BY_ID[it.id].name}</b><small>${CHARM_BY_ID[it.id].desc}</small></span>`;
       return `<div class="dg-shop-item${it.sold ? ' sold' : ''}">${body}<button class="btn small${can ? ' primary' : ''}" data-dg="buy" data-index="${i}" ${can ? '' : 'disabled'}>${it.sold ? '売り切れ' : `🪙 ${price}`}</button></div>`;
     }).join('');
-    return `${head}<p>コインで買えます（持っているコイン：🪙 ${run.coins}）。</p><div class="dg-shop">${rows}</div>${leave('店を出て先へ進む')}</div>`;
+    const cardIds = p.stock.filter(it => it.kind === 'card' && !it.sold).map(it => it.id);
+    return `${head}<p>コインで買えます（持っているコイン：🪙 ${run.coins}）。</p><div class="dg-shop">${rows}</div>${dgOptListHtml(cardIds)}${leave('店を出て先へ進む')}</div>`;
   }
   if (p.type === 'mystery') {
     const ev = DUNGEON_EVENT_BY_ID[p.event];
@@ -204,11 +238,21 @@ function showDungeonDeck() {
   const run = dgRun();
   const cards = key => deckGroups(run.deck[key]).map(([id, n]) => dgCardHtml(run, id, '', n > 1 ? `<span class="card-count">×${n}</span>` : '')).join('');
   const hero = HERO_BY_ID[run.hero];
+  // 選択スキル：デッキの中で選択スキルを持つカードごとに、候補から選ぶ（いつでも無料で変えられる）
+  const optIds = [...new Set(runCards(run))].filter(runHasOptions);
+  const opts = optIds.length
+    ? `<div class="tip-sub">選択スキル（ダンジョンの中だけ。いつでも変更できる）</div>${optIds.map(id => `<div class="opt-box">
+        <div class="tip-sub">✦ ${CARD_DEFS[id].name}</div>
+        ${dgOptButtonsHtml(run, id, 'deck-opt')}
+        <button class="btn opt-btn${runOption(run, id) === null ? ' on' : ''}" data-dg="deck-opt" data-card="${id}" data-index="none">なし</button>
+      </div>`).join('')}`
+    : '';
   showOverlay(`<div class="result detail dk-panel dg-deck">
     <h2>ダンジョンのデッキ</h2>
     <p>${hero.name}「${hero.skills[run.skill].name}」：${hero.skills[run.skill].desc}</p>
     <div class="tip-sub">モンスター ${run.deck.monsters.length}/${CONFIG.DECK_MONSTERS}</div><div class="deck-grid">${cards('monsters')}</div>
     <div class="tip-sub">アイテム ${run.deck.items.length}/${CONFIG.DECK_ITEMS}</div><div class="deck-grid">${cards('items')}</div>
+    ${opts}
     <div class="tip-sub">お守り ${run.charms.length}個</div>
     ${run.charms.map(c => `<p class="dg-charm-line"><b>${CHARM_BY_ID[c].icon} ${CHARM_BY_ID[c].name}</b>：${CHARM_BY_ID[c].desc}</p>`).join('') || '<p>まだ持っていません</p>'}
     <button class="btn primary" data-act="close-detail">とじる</button>
@@ -275,6 +319,16 @@ function dungeonClick(e) {
   }
   if (!run) return;
   if (act === 'deck') { showDungeonDeck(); return; }
+  // デッキ確認画面から選択スキルを変える（対戦中はこの画面を開けないので、変えられない）
+  if (act === 'deck-opt') {
+    const i = el.dataset.index === 'none' ? null : Number(el.dataset.index);
+    if (runSetOption(run, el.dataset.card, i)) { sfx('equip'); dgSave(); }
+    showDungeonDeck();
+    renderDungeon();
+    return;
+  }
+  if (act === 'opt' && runSetOption(run, el.dataset.card, Number(el.dataset.index))) sfx('equip');
+  if (act === 'opt-later') runSkipOption(run, el.dataset.card);
   if (act === 'node') { showNodeInfo(Number(el.dataset.node)); return; }
   if (act === 'enter') { hideOverlay(); enterNode(run, Number(el.dataset.node)); sfx('tap'); }
   if (act === 'fight' && run.pending && run.pending.phase === 'battle') { dgSave(); startBattle({ type: 'dungeon' }); return; }

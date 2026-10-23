@@ -5317,6 +5317,91 @@ test('ダンジョン：途中で閉じても、続きから再開できる（�
   eq([loadProfile(st).dungeon, loadProfile(st).gold], [newDungeonData(), 321]);
 });
 
+test('ダンジョン：選択スキルはLv1から選べる（ダンジョンの中だけ。コレクションの選択とは別）', () => {
+  const [p, run] = dgStart();
+  const epic = realCards(MONSTERS).find(c => c.rarity === 'epic' && CARD_DEFS[c.id].options).id;
+  const common = run.deck.monsters[0];
+  eq([runHasOptions(epic), runHasOptions(common), runOptionAsk(run)], [true, false, null]);
+  // 手に入れると、選ぶのを待つ列に入る（選択スキルを持たないカードは入らない）
+  assert(runAddCard(run, epic));
+  eq([runOptionAsk(run), run.deck.options[epic]], [epic, undefined]);
+  eq([runSetOption(run, epic, 99), runSetOption(run, common, 0), runSetOption(run, 'zzz', 0)], [false, false, false], '候補にない番号・選択スキルのないカード・デッキにないカードは選べない');
+  assert(runSetOption(run, epic, 1));
+  eq([runOption(run, epic), runOptionAsk(run)], [1, null]);
+  // 対戦では、Lv1 のまま選んだスキルを持って戦う（解放レベル Lv3 の条件はかからない）
+  const deck = runDeckForBattle(run);
+  eq([deck.levels[epic], deck.options[epic], deck.freeOptions], [1, 1, true]);
+  const s = newGame(deck, randomDeck(testRng), testRng);
+  const inGame = [...s.players[0].hand, ...s.players[0].deck].find(h => h.card.id === epic).card;
+  const want = CARD_DEFS[epic].options[1];
+  eq([inGame.level, inGame.option, inGame.skills[inGame.skills.length - 1]], [1, 1, { ...want, opt: true }]);
+  // 通常の対戦（レベルの条件あり）では、同じ指定でも Lv1 なら選択スキルなし
+  eq(cardAt(epic, 1, 1).option, null);
+  // コレクションの選択（profile.options）は変わらない
+  eq(p.options, {});
+  // 「なし」に戻せる。あとで選ぶ（列から外す）こともできる
+  assert(runSetOption(run, epic, null));
+  eq(runOption(run, epic), null);
+  const epic2 = realCards(MONSTERS).find(c => c.rarity === 'epic' && CARD_DEFS[c.id].options && c.id !== epic).id;
+  run.deck.monsters = run.deck.monsters.slice(0, 6);
+  assert(runAddCard(run, epic2));
+  eq(runOptionAsk(run), epic2);
+  runSkipOption(run, epic2);
+  eq([runOptionAsk(run), runOption(run, epic2)], [null, null]);
+  // 2枚目を手に入れても、もう選んでいれば聞かない。最後の1枚がなくなると選択も消える
+  assert(runSetOption(run, epic2, 0) && runAddCard(run, epic2));
+  eq(runOptionAsk(run), null);
+  assert(runRemoveCard(run, 'monsters', run.deck.monsters.indexOf(epic2)));
+  eq(runOption(run, epic2), 0, 'まだ1枚残っている');
+  assert(runRemoveCard(run, 'monsters', run.deck.monsters.indexOf(epic2)));
+  eq(runOption(run, epic2), null, '最後の1枚がなくなった');
+  // 装備の選択スキルも同じ
+  const eqp = realCards(ITEMS).find(c => CARD_DEFS[c.id].options).id;
+  run.deck.items = run.deck.items.slice(0, 4);
+  assert(runAddCard(run, eqp) && runSetOption(run, eqp, 0));
+  eq(runDeckForBattle(run).options[eqp], 0);
+});
+
+test('ダンジョン：選んだ選択スキルは、中断して再開しても残る（壊れた指定は捨てる）。古いセーブも読める', () => {
+  const st = memStorage();
+  const [p, run] = dgStart('agni', 0, 777);
+  const epic = realCards(MONSTERS).find(c => c.rarity === 'epic' && CARD_DEFS[c.id].options).id;
+  const leg = realCards(MONSTERS).find(c => c.rarity === 'legend' && CARD_DEFS[c.id].options).id;
+  assert(runAddCard(run, epic) && runSetOption(run, epic, 1) && runAddCard(run, leg));
+  saveProfile(p, st);
+  const q = loadProfile(st);
+  eq([q.dungeon.run.deck.options, q.dungeon.run.optAsk], [{ [epic]: 1 }, [leg]], '選んだものも、まだ選んでいないカードも残る');
+  eq(runDeckForBattle(q.dungeon.run).options, { [epic]: 1 });
+  // 壊れた指定（デッキにないカード・候補にない番号）は捨てる
+  q.dungeon.run.deck.options = { [epic]: 99, zzz: 0, [run.deck.monsters[0]]: 0, [leg]: 0 };
+  q.dungeon.run.optAsk = ['zzz', leg];
+  saveProfile(q, st);
+  const r = loadProfile(st);
+  eq([r.dungeon.run.deck.options, r.dungeon.run.optAsk], [{ [leg]: 0 }, []]);
+  // 古い形式（options も optAsk もない挑戦）
+  const old = JSON.parse(JSON.stringify(r));
+  delete old.dungeon.run.deck.options; delete old.dungeon.run.optAsk;
+  st.setItem(GROWTH.SAVE_KEY, JSON.stringify(old));
+  const o = loadProfile(st);
+  eq([o.dungeon.run.deck.options, runOptionAsk(o.dungeon.run), runDeckForBattle(o.dungeon.run).options], [{}, null, {}]);
+  // クリアの記録にも残る（前回クリアしたデッキの表示用）
+  const [p2, run2] = dgStart('agni', 0, 99);
+  assert(runAddCard(run2, epic) && runSetOption(run2, epic, 0));
+  run2.over = 'clear';
+  endDungeon(p2, 'clear');
+  eq(p2.dungeon.lastClear.deck.options, { [epic]: 0 });
+});
+
+test('ダンジョン：対戦履歴でも、選んだ選択スキルのカードとして見られる', () => {
+  const [, run] = dgStart();
+  const epic = realCards(MONSTERS).find(c => c.rarity === 'epic' && CARD_DEFS[c.id].options).id;
+  assert(runAddCard(run, epic) && runSetOption(run, epic, 0));
+  const packed = packDeck(runDeckForBattle(run));
+  eq([packed.op[epic], packed.fo], [0, 1]);
+  eq(cardAt(epic, packed.lv[epic] || 1, packed.op[epic], !!packed.fo).option, 0);
+  eq(packDeck(randomDeck(testRng)).fo, undefined, '通常のデッキには付かない');
+});
+
 test('ダンジョン：持ち帰れるのはゴールドと魔石だけ。到達したマスの数で決まり、クリアで試練が解放される', () => {
   const R = DUNGEON.REWARD;
   // 途中で終わった：進んだマスの数ぶん

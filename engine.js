@@ -53,13 +53,14 @@ function makePlayer(name, isCpu, deckIds, rng) {
   // デッキは { monsters: [id], items: [id], levels: { id: レベル } }。levels にないカードはLv1
   const levels = deckIds.levels || {};
   const options = deckIds.options || {}; // options: { id: 選択スキルの番号 }
+  const freeOptions = !!deckIds.freeOptions; // true なら選択スキルにレベルの条件がない（ダンジョンのデッキ）
   // 同じカードが2枚入っていても、1枚ずつ別の番号（uid）を持つ別々のカードとして扱う。
   // copy: 同じカードが複数あるときの通し番号（1, 2）。1枚だけなら 0。ログや表示で「①②」と区別するのに使う
   const ids = [...deckIds.monsters, ...deckIds.items];
   const seen = {};
   const deck = ids.map(id => {
     seen[id] = (seen[id] || 0) + 1;
-    return { uid: uidSeq++, card: cardAt(id, levels[id] || 1, options[id]), copy: ids.indexOf(id) !== ids.lastIndexOf(id) ? seen[id] : 0 };
+    return { uid: uidSeq++, card: cardAt(id, levels[id] || 1, options[id], freeOptions), copy: ids.indexOf(id) !== ids.lastIndexOf(id) ? seen[id] : 0 };
   });
   // 初手に1ターン目から出せるモンスターが1体は入るように切り直す（事故負け防止）
   const openable = h => h.card.kind === 'monster' && h.card.cost <= CONFIG.CRYSTALS_PER_TURN;

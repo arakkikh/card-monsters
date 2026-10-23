@@ -17,7 +17,7 @@ function bookCard(ref) {
   const id = sided ? ref.slice(1) : ref;
   if (!CARD_DEFS[id]) return CARD_BY_ID[id] || null;
   const deck = sided && bookDecks ? bookDecks[Number(ref[0])] : null;
-  if (deck) return cardAt(id, deck.lv[id] || 1, deck.op[id]);
+  if (deck) return cardAt(id, deck.lv[id] || 1, deck.op[id], !!deck.fo);
   return owns(profile, id) ? ownedCard(profile, id) : cardAt(id);
 }
 

@@ -246,7 +246,9 @@ function packDeck(deck) {
     if ((deck.levels || {})[id] > 1) lv[id] = deck.levels[id];
     if ((deck.options || {})[id] != null) op[id] = deck.options[id];
   }
-  return { m: deck.monsters.slice(), i: deck.items.slice(), lv, op, h: deck.hero ? deck.hero.skill : null, hn: deck.hero ? deck.hero.name : null };
+  const out = { m: deck.monsters.slice(), i: deck.items.slice(), lv, op, h: deck.hero ? deck.hero.skill : null, hn: deck.hero ? deck.hero.name : null };
+  if (deck.freeOptions) out.fo = 1; // ダンジョンのデッキ：選択スキルにレベルの条件がない
+  return out;
 }
 
 // 終わった対戦から、履歴の1件を作る
